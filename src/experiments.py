@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .audit import audit_cascade_result, audit_single_shot_result
 from .baselines import (
     ALPHA_GRID,
     run_weighted_baselines,
@@ -169,6 +170,15 @@ def _best_result(results):
     )[0]
 
 
+def _has_assignment_result(result, key):
+    """Return True when a solver result contains a complete assignment payload."""
+    return (
+        isinstance(result, dict)
+        and result.get("status") in {"ok", "optimal", "feasible"}
+        and key in result
+    )
+
+
 def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, output_rows=None):
     domain_rows = []
     usage = []
@@ -240,6 +250,7 @@ def run_experiments(
     budgets, cheapest, best = compute_budget_grid(data, root)
     scenarios = build_scenarios(data)
     table_rows = {"domain": [], "usage": [], "scenario": []}
+    audit_rows = []
 
     baseline_rows = [
         _summary_row(cheapest, family="baseline"),
@@ -249,6 +260,9 @@ def run_experiments(
     a0_df.to_csv(root / "tables" / "a0_results.csv", index=False)
     pd.DataFrame(baseline_rows).to_csv(root / "tables" / "baseline_extremes.csv", index=False)
     _record_solution_tables([cheapest, best] + a0_results, data, scenarios, output_rows=table_rows)
+    for result in [cheapest, best] + a0_results:
+        if _has_assignment_result(result, "assignment"):
+            audit_rows.extend(audit_single_shot_result(data, result))
     write_json(
         root / "solutions" / "baseline_assignments.json",
         {r["policy"]: r.get("assignment", {}) for r in [cheapest, best] + a0_results},
@@ -261,6 +275,10 @@ def run_experiments(
                 result = solve_a1(data, K=K, B=B, time_limit=time_limit)
                 result["budget_name"] = budget_name
                 a1_results.append(result)
+                if _has_assignment_result(result, "assignment"):
+                    audit_rows.extend(
+                        audit_single_shot_result(data, result, K=result.get("K"), B=result.get("B"))
+                    )
         pd.DataFrame(
             [
                 _summary_row(
@@ -301,6 +319,18 @@ def run_experiments(
                     )
                     result["budget_name"] = budget_name
                     a2_results.append(result)
+                    if _has_assignment_result(result, "cascade_assignment"):
+                        audit_rows.extend(
+                            audit_cascade_result(
+                                data,
+                                cascades,
+                                params,
+                                result,
+                                K=result.get("K"),
+                                B=result.get("B"),
+                                Emax=result.get("Emax"),
+                            )
+                        )
         pd.DataFrame(
             [
                 _summary_row(
@@ -374,6 +404,18 @@ def run_experiments(
                 }
             )
             a3_results.append(result)
+            if _has_assignment_result(result, "cascade_assignment"):
+                audit_rows.extend(
+                    audit_cascade_result(
+                        data,
+                        cascades_rho,
+                        params_rho,
+                        result,
+                        K=result.get("K"),
+                        B=result.get("B"),
+                        Emax=result.get("Emax"),
+                    )
+                )
             result_rows = {"domain": [], "usage": [], "scenario": []}
             _record_solution_tables(
                 [result],
@@ -500,6 +542,7 @@ def run_experiments(
     pd.DataFrame(table_rows["scenario"]).to_csv(
         root / "tables" / "scenario_quality.csv", index=False
     )
+    pd.DataFrame(audit_rows).to_csv(root / "tables" / "solution_audit.csv", index=False)
 
     make_all_plots(root)
     return {

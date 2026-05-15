@@ -81,3 +81,30 @@ def test_a2_can_use_single_stage_cascades_when_escalation_cap_is_zero(synthetic_
         cascade_lookup.loc[cascade_id, "depth"] == 1
         for cascade_id in result["cascade_assignment"].values()
     )
+
+
+def test_a2_generalizes_a1_on_synthetic_data(synthetic_data):
+    from src.cascade_generation import generate_cascades
+    from src.pyomo_cascade import solve_a2
+    from src.pyomo_single_shot import solve_a1
+
+    a1 = solve_a1(synthetic_data, K=2, B=10.0, time_limit=20)
+    if a1["status"] == "no_solver":
+        pytest.skip(a1["message"])
+
+    cascades, params = generate_cascades(synthetic_data, rho=0.75, max_cascades=40)
+    a2 = solve_a2(
+        synthetic_data,
+        cascades,
+        params["R"],
+        params["C"],
+        params["Esc"],
+        params["A_p"],
+        K=2,
+        B=10.0,
+        Emax=1.0,
+        time_limit=20,
+    )
+
+    assert a2["status"] in {"optimal", "feasible", "feasible_time_limited"}
+    assert a2["avg_quality"] + 1e-8 >= a1["avg_quality"]

@@ -14,40 +14,40 @@ from .solver_utils import (
 def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
     """Solve A2 two-stage cascade MILP."""
     policy = f"A2 K={K} B={B:.6g} Emax={Emax:g}"
-    if K < 2:
-        message = "A2 requires K >= 2"
+    if K < 1:
+        message = "A2 requires K >= 1"
         return {
             "policy": policy,
             "status": "infeasible",
             "message": message,
             "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
         }
-    cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2"]].to_dict("index")
+    cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2", "m3", "depth"]].to_dict("index")
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])
+    stage_links = []
+    for prompt, cascade_id in pa:
+        row = cascade_lookup[cascade_id]
+        for model_name in [row["m1"], row["m2"], row["m3"]]:
+            if isinstance(model_name, str) and model_name:
+                stage_links.append((prompt, cascade_id, model_name))
     n_prompts = len(data["P"])
 
     model = pyo.ConcreteModel()
     model.P = pyo.Set(initialize=data["P"])
     model.M = pyo.Set(initialize=data["M"])
     model.PA = pyo.Set(dimen=2, initialize=pa)
+    model.PAM = pyo.Set(dimen=3, initialize=stage_links)
     model.z = pyo.Var(model.PA, within=pyo.Binary)
     model.y = pyo.Var(model.M, within=pyo.Binary)
 
     def assignment_rule(mdl, prompt):
         return sum(mdl.z[prompt, cascade_id] for cascade_id in A_p[prompt]) == 1
 
-    def link_first_rule(mdl, prompt, cascade_id):
-        return mdl.z[prompt, cascade_id] <= mdl.y[cascade_lookup[cascade_id]["m1"]]
-
-    def link_second_rule(mdl, prompt, cascade_id):
-        m2 = cascade_lookup[cascade_id]["m2"]
-        if not isinstance(m2, str) or not m2:
-            return pyo.Constraint.Skip
-        return mdl.z[prompt, cascade_id] <= mdl.y[m2]
+    def link_stage_rule(mdl, prompt, cascade_id, model_name):
+        return mdl.z[prompt, cascade_id] <= mdl.y[model_name]
 
     model.assignment = pyo.Constraint(model.P, rule=assignment_rule)
-    model.link_first = pyo.Constraint(model.PA, rule=link_first_rule)
-    model.link_second = pyo.Constraint(model.PA, rule=link_second_rule)
+    model.link_stage = pyo.Constraint(model.PAM, rule=link_stage_rule)
     model.pool = pyo.Constraint(expr=sum(model.y[m] for m in model.M) <= K)
     model.budget = pyo.Constraint(expr=sum(C[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= B)
     model.escalation = pyo.Constraint(

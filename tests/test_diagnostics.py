@@ -102,7 +102,7 @@ def test_pre_solve_infeasible_results_include_diagnostics(synthetic_data):
             params["C"],
             params["Esc"],
             params["A_p"],
-            K=1,
+            K=0,
             B=10.0,
             Emax=1.0,
             time_limit=20,

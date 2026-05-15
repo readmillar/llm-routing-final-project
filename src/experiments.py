@@ -17,6 +17,7 @@ from .pyomo_cascade import generate_cascades, solve_a2
 from .pyomo_robust_cascade import build_scenarios, compute_domain_floors, solve_a3
 from .pyomo_single_shot import solve_a1
 from .solver_utils import write_json
+from .stress_testing import evaluate_policy_under_scenarios, sample_dirichlet_scenarios
 
 STATUS_RANK = {
     "optimal": 4,
@@ -542,6 +543,39 @@ def run_experiments(
         _best_result(a2_results),
         select_report_a3_policy(a3_results),
     ]
+    stress_scenarios = sample_dirichlet_scenarios(data, n=500, concentration=40.0, seed=164)
+    stress_rows = []
+    stress_cascade_cache = {}
+    for result in representative:
+        if result is None or result.get("status") not in {
+            "ok",
+            "optimal",
+            "feasible",
+            "feasible_time_limited",
+        }:
+            continue
+        if "cascade_assignment" in result:
+            rho = result.get("rho", 0.75)
+            if rho not in stress_cascade_cache:
+                stress_cascade_cache[rho] = generate_cascades(
+                    data,
+                    rho=rho,
+                    max_cascades=max_cascades,
+                    recovery_lookup=recovery_lookup,
+                )[1]
+            params_rho = stress_cascade_cache[rho]
+            stress_rows.extend(
+                evaluate_policy_under_scenarios(
+                    result, stress_scenarios, params_rho["R"], params_rho["C"]
+                ).to_dict("records")
+            )
+        elif "assignment" in result:
+            stress_rows.extend(
+                evaluate_policy_under_scenarios(
+                    result, stress_scenarios, data["q"], data["c"]
+                ).to_dict("records")
+            )
+    pd.DataFrame(stress_rows).to_csv(root / "tables" / "stress_test_results.csv", index=False)
     summary = [
         _summary_row(r, family=r["policy"].split()[0]) for r in representative if r is not None
     ]

@@ -13,7 +13,10 @@ def _read_csv(path):
     path = Path(path)
     if not path.exists() or path.stat().st_size == 0:
         return pd.DataFrame()
-    return pd.read_csv(path)
+    try:
+        return pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
 
 
 def _successful(df):
@@ -180,6 +183,28 @@ def plot_model_complementarity_heatmap(root):
     plt.close()
 
 
+def plot_stress_test_quality_distribution(root):
+    stress = _read_csv(root / "tables" / "stress_test_results.csv")
+    plt.figure(figsize=(9, 5.5))
+    if not stress.empty:
+        policies = list(
+            stress.groupby("policy")["avg_quality"]
+            .mean()
+            .sort_values(ascending=False)
+            .head(6)
+            .index
+        )
+        data = [stress.loc[stress["policy"] == policy, "avg_quality"].values for policy in policies]
+        plt.boxplot(data, tick_labels=policies, showfliers=False)
+        plt.xticks(rotation=30, ha="right")
+        plt.ylabel("Average quality under sampled traffic mix")
+    plt.title("Stress-test quality distribution")
+    plt.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(root / "figures" / "stress_test_quality_distribution.png", dpi=220)
+    plt.close()
+
+
 def make_all_plots(output_dir):
     root = Path(output_dir)
     (root / "figures").mkdir(parents=True, exist_ok=True)
@@ -189,3 +214,4 @@ def make_all_plots(output_dir):
     plot_domain_performance(root)
     plot_robustness_heatmap(root)
     plot_model_complementarity_heatmap(root)
+    plot_stress_test_quality_distribution(root)

@@ -8,6 +8,7 @@ from .solver_utils import (
     result_status,
     solve_model,
 )
+from .stress_testing import build_l1_shift_scenarios
 
 
 def _normalize_domain_weights(data, weights):
@@ -35,6 +36,7 @@ def build_scenarios(data):
             "domain_weights": normalized,
             "prompt_weights": scenario_weights(data["P"], data["prompt_domain"], normalized),
         }
+    scenarios.update(build_l1_shift_scenarios(data, radius=0.4))
     return scenarios
 
 

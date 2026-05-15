@@ -57,7 +57,7 @@ def generate_single_stage_cascades(data):
     return pd.DataFrame(rows)
 
 
-def _all_two_stage_cascades(data, rho):
+def _all_two_stage_cascades(data, rho, recovery_lookup=None):
     summary = summarize_models(data).set_index("model")
     cost_cutoff = summary["cbar"].quantile(0.30)
     quality_cutoff = summary["qbar"].quantile(0.50)
@@ -73,7 +73,9 @@ def _all_two_stage_cascades(data, rho):
             if not feasible_prompts:
                 continue
             avg_r = sum(
-                data["r"][(p, m1)] + (1 - data["r"][(p, m1)]) * rho * data["r"][(p, m2)]
+                data["r"][(p, m1)]
+                + (1 - data["r"][(p, m1)])
+                * _recovery_term(data, p, m1, m2, rho, recovery_lookup)
                 for p in feasible_prompts
             ) / len(feasible_prompts)
             avg_c = sum(
@@ -103,9 +105,9 @@ def _all_two_stage_cascades(data, rho):
     return pd.DataFrame(rows)
 
 
-def generate_two_stage_cascades(data, rho=0.75, max_two_stage=250):
+def generate_two_stage_cascades(data, rho=0.75, max_two_stage=250, recovery_lookup=None):
     """Generate feasible cheap-then-strong depth-2 cascade candidates."""
-    cascades = _all_two_stage_cascades(data, rho)
+    cascades = _all_two_stage_cascades(data, rho, recovery_lookup=recovery_lookup)
     if cascades.empty:
         raise ValueError("No feasible two-stage cascade candidates generated")
     if len(cascades) <= max_two_stage:
@@ -143,9 +145,9 @@ def _recovery_term(data, prompt, m1, m2, rho, recovery_lookup):
     """Return the conditional recovery contribution for a later-stage model."""
     if recovery_lookup:
         domain = data["prompt_domain"][prompt]
-        for key in ((domain, m1, m2), (m1, m2), (domain, m2), m2):
-            if key in recovery_lookup:
-                return float(recovery_lookup[key]) * data["r"][(prompt, m2)]
+        recovery = recovery_lookup.get((m1, m2, domain))
+        if recovery and recovery.get("fallback_level") != "global_rho":
+            return float(recovery["recovery_rate"])
     return rho * data["r"][(prompt, m2)]
 
 
@@ -225,7 +227,12 @@ def generate_cascades(
     if two_stage_budget:
         try:
             frames.append(
-                generate_two_stage_cascades(data, rho=rho, max_two_stage=two_stage_budget)
+                generate_two_stage_cascades(
+                    data,
+                    rho=rho,
+                    max_two_stage=two_stage_budget,
+                    recovery_lookup=recovery_lookup,
+                )
             )
         except ValueError:
             pass

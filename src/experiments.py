@@ -9,6 +9,7 @@ from .baselines import (
     solve_always_best_quality,
     solve_always_cheapest,
 )
+from .complementarity import estimate_pair_recovery, recovery_lookup_from_frame
 from .load_data import load_dataset
 from .metrics import domain_quality_rows, records_from_result, scenario_quality, usage_rows
 from .plots import make_all_plots
@@ -247,6 +248,9 @@ def run_experiments(
 ):
     root = ensure_output_dirs(output_dir)
     data = load_dataset(data_path, output_dir=root)
+    recovery_df = estimate_pair_recovery(data, min_support=5, global_rho=0.75)
+    recovery_df.to_csv(root / "tables" / "model_pair_recovery.csv", index=False)
+    recovery_lookup = recovery_lookup_from_frame(recovery_df)
     budgets, cheapest, best = compute_budget_grid(data, root)
     scenarios = build_scenarios(data)
     table_rows = {"domain": [], "usage": [], "scenario": []}
@@ -298,7 +302,9 @@ def run_experiments(
     params = {"A_p": {}, "R": {}, "C": {}, "Esc": {}}
     a2_results = []
     if not skip_a2 or not skip_a3:
-        cascades, params = generate_cascades(data, rho=0.75, max_cascades=max_cascades)
+        cascades, params = generate_cascades(
+            data, rho=0.75, max_cascades=max_cascades, recovery_lookup=recovery_lookup
+        )
         cascades.to_csv(root / "tables" / "cascade_candidates.csv", index=False)
 
     if not skip_a2:
@@ -364,7 +370,12 @@ def run_experiments(
                                 )
         for K, budget_name, B, Emax, floor_multiplier, lambda_slack, rho in a3_grid:
             if rho not in rho_cascades:
-                rho_cascades[rho] = generate_cascades(data, rho=rho, max_cascades=max_cascades)
+                rho_cascades[rho] = generate_cascades(
+                    data,
+                    rho=rho,
+                    max_cascades=max_cascades,
+                    recovery_lookup=recovery_lookup,
+                )
             cascades_rho, params_rho = rho_cascades[rho]
             floors = compute_domain_floors(data, multiplier=floor_multiplier)
             grid_id = make_a3_grid_id(

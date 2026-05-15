@@ -145,6 +145,41 @@ def plot_robustness_heatmap(root):
     plt.close()
 
 
+def plot_model_complementarity_heatmap(root):
+    recovery = _read_csv(root / "tables" / "model_pair_recovery.csv")
+    plt.figure(figsize=(10, 8))
+    if not recovery.empty:
+        if "fallback_level" in recovery.columns:
+            recovery = recovery[recovery["fallback_level"] != "global_rho"].copy()
+    if not recovery.empty:
+        recovery["weighted_recovery"] = recovery["recovery_rate"] * recovery["support"]
+        pair = (
+            recovery.groupby(["m1", "m2"], as_index=False)
+            .agg(weighted_recovery=("weighted_recovery", "sum"), support=("support", "sum"))
+            .sort_values("support", ascending=False)
+        )
+        pair = pair[pair["support"] > 0].copy()
+        pair["recovery_rate"] = pair["weighted_recovery"] / pair["support"]
+        top_models = sorted(set(pair.head(20)["m1"]).union(pair.head(20)["m2"]))
+        plot_df = pair[pair["m1"].isin(top_models) & pair["m2"].isin(top_models)]
+        pivot = plot_df.pivot_table(
+            index="m1", columns="m2", values="recovery_rate", aggfunc="mean"
+        )
+        if not pivot.empty:
+            image = plt.imshow(
+                pivot.fillna(0.0).values, aspect="auto", vmin=0, vmax=1, cmap="magma"
+            )
+            plt.xticks(
+                range(len(pivot.columns)), pivot.columns, rotation=60, ha="right", fontsize=7
+            )
+            plt.yticks(range(len(pivot.index)), pivot.index, fontsize=7)
+            plt.colorbar(image, label="Recovery rate")
+    plt.title("Model complementarity: P(second succeeds | first fails)")
+    plt.tight_layout()
+    plt.savefig(root / "figures" / "model_complementarity_heatmap.png", dpi=220)
+    plt.close()
+
+
 def make_all_plots(output_dir):
     root = Path(output_dir)
     (root / "figures").mkdir(parents=True, exist_ok=True)
@@ -153,3 +188,4 @@ def make_all_plots(output_dir):
     plot_selected_model_usage(root)
     plot_domain_performance(root)
     plot_robustness_heatmap(root)
+    plot_model_complementarity_heatmap(root)

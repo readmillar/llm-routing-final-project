@@ -78,6 +78,11 @@ def solve_a4_cvar_cascade(
         cascade_frame["m3"] = ""
     if "depth" not in cascade_frame.columns:
         cascade_frame["depth"] = 2
+    if (cascade_frame["depth"] == 3).any():
+        return _invalid_result(
+            policy,
+            "A4 CVaR does not support depth-3 cascades until Esc3 reach accounting is wired.",
+        )
     cascade_lookup = cascade_frame[["m1", "m2", "m3", "depth"]].to_dict("index")
 
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])

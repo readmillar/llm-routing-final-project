@@ -27,6 +27,7 @@ def solve_a2(
     storage_cap_gb=None,
     provider_pool_caps=None,
     provider_traffic_caps=None,
+    Esc3=None,
 ):
     """Solve A2 two-stage cascade MILP."""
     policy = f"A2 K={K} B={B:.6g} Emax={Emax:g}"
@@ -41,6 +42,15 @@ def solve_a2(
     if metadata is not None:
         validate_metadata_covers_models(metadata, data["M"])
     cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2", "m3", "depth"]].to_dict("index")
+    has_three_stage = any(row["depth"] == 3 for row in cascade_lookup.values())
+    if has_three_stage and Esc3 is None:
+        message = "A2 requires Esc3 when depth-3 cascades are provided"
+        return {
+            "policy": policy,
+            "status": "invalid",
+            "message": message,
+            "diagnostics": pre_solve_diagnostics(policy, "invalid", message),
+        }
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])
     stage_links = []
     for prompt, cascade_id in pa:
@@ -104,7 +114,7 @@ def solve_a2(
                     and row["m3"]
                     and provider[row["m3"]] == group
                 ):
-                    terms.append(Esc[p, a] * mdl.z[p, a])
+                    terms.append(Esc3[p, a] * mdl.z[p, a])
             if not terms:
                 return pyo.Constraint.Feasible
             return sum(terms) / n_prompts <= float(provider_traffic_caps[group])
@@ -146,7 +156,16 @@ def solve_a2(
             "message": "Solver stopped before loading a complete incumbent solution",
             "diagnostics": diagnostics,
         }
-    metrics = cascade_assignment_metrics(data, cascades, assignment, R, C, Esc, policy)
+    metrics = cascade_assignment_metrics(
+        data,
+        cascades,
+        assignment,
+        R,
+        C,
+        Esc,
+        policy,
+        esc3_param=Esc3,
+    )
     metrics.update(
         {
             "status": "feasible" if status == "feasible_time_limited" else status,

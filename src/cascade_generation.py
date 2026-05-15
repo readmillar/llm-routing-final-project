@@ -131,6 +131,72 @@ def generate_two_stage_cascades(data, rho=0.75, max_two_stage=250, recovery_look
     return selected.reset_index(drop=True)
 
 
+def generate_three_stage_cascades(data, rho=0.75, max_three_stage=50, recovery_lookup=None):
+    """Generate a small high-value set of feasible depth-3 cascade candidates."""
+    summary = summarize_models(data).set_index("model")
+    cheap = summary.sort_values(["cbar", "qbar"], ascending=[True, False]).head(6).index
+    middle = summary.sort_values(["qbar", "cbar"], ascending=[False, True]).head(10).index
+    final = summary.sort_values(["qbar", "cbar"], ascending=[False, True]).head(6).index
+    pm = set(data["PM"])
+    rows = []
+    for m1 in cheap:
+        for m2 in middle:
+            for m3 in final:
+                if len({m1, m2, m3}) < 3:
+                    continue
+                feasible_prompts = [
+                    p for p in data["P"] if (p, m1) in pm and (p, m2) in pm and (p, m3) in pm
+                ]
+                if not feasible_prompts:
+                    continue
+                values = [
+                    _three_stage_summary_values(data, p, m1, m2, m3, rho, recovery_lookup)
+                    for p in feasible_prompts
+                ]
+                rows.append(
+                    {
+                        "depth": 3,
+                        "m1": m1,
+                        "m2": m2,
+                        "m3": m3,
+                        "qbar_m1": summary.loc[m1, "qbar"],
+                        "qbar_m2": summary.loc[m2, "qbar"],
+                        "qbar_m3": summary.loc[m3, "qbar"],
+                        "cbar_m1": summary.loc[m1, "cbar"],
+                        "cbar_m2": summary.loc[m2, "cbar"],
+                        "cbar_m3": summary.loc[m3, "cbar"],
+                        "avg_R": sum(value["R"] for value in values) / len(values),
+                        "avg_C": sum(value["C"] for value in values) / len(values),
+                        "avg_Esc": sum(value["Esc"] for value in values) / len(values),
+                        "feasible_prompts": len(feasible_prompts),
+                    }
+                )
+    frame = pd.DataFrame(rows).head(max_three_stage).reset_index(drop=True)
+    if not frame.empty:
+        frame.insert(
+            0,
+            "cascade_id",
+            [f"s3::{row.m1}::{row.m2}::{row.m3}" for row in frame.itertuples()],
+        )
+    return frame
+
+
+def _three_stage_summary_values(data, prompt, m1, m2, m3, rho, recovery_lookup):
+    """Return prompt-specific summary values for a three-stage cascade."""
+    r1 = data["r"][(prompt, m1)]
+    fail1 = 1 - r1
+    recovery2 = _recovery_term(data, prompt, m1, m2, rho, recovery_lookup)
+    fail2 = fail1 * (1 - recovery2)
+    recovery3 = _recovery_term(data, prompt, m2, m3, rho, recovery_lookup)
+    return {
+        "R": r1 + fail1 * recovery2 + fail2 * recovery3,
+        "C": data["c"][(prompt, m1)]
+        + fail1 * data["c"][(prompt, m2)]
+        + fail2 * data["c"][(prompt, m3)],
+        "Esc": fail1,
+    }
+
+
 def _cascade_models(row):
     """Return non-empty stage model names for a cascade row."""
     models = []
@@ -219,8 +285,7 @@ def generate_cascades(
     recovery_lookup=None,
     include_three_stage=False,
 ):
-    """Generate single-stage and depth-2 cascades plus prompt-specific parameters."""
-    del include_three_stage
+    """Generate available cascade candidates plus prompt-specific parameters."""
     singles = generate_single_stage_cascades(data)
     two_stage_budget = max(0, max_cascades - len(singles))
     frames = [singles]
@@ -236,6 +301,17 @@ def generate_cascades(
             )
         except ValueError:
             pass
+    used_capacity = sum(len(frame) for frame in frames)
+    three_stage_budget = min(50, max(0, max_cascades - used_capacity))
+    if include_three_stage and three_stage_budget:
+        threes = generate_three_stage_cascades(
+            data,
+            rho=rho,
+            max_three_stage=three_stage_budget,
+            recovery_lookup=recovery_lookup,
+        )
+        if not threes.empty:
+            frames.append(threes)
     cascades = pd.concat(frames, ignore_index=True)
     params = precompute_cascade_parameters(data, cascades, rho=rho, recovery_lookup=recovery_lookup)
     uncovered = [prompt for prompt, values in params["A_p"].items() if not values]

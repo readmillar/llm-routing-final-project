@@ -163,3 +163,68 @@ def test_a3_returns_robust_metrics(synthetic_data):
     assert 0.0 <= result["eta"] <= 1.0
     assert set(result["scenario_metrics"])
     assert set(result["domain_slacks"]) == set(synthetic_data["D"])
+
+
+def test_a3_rejects_three_stage_cascades_until_esc3_is_supported(synthetic_data):
+    """Covers pre-solve rejection for unsupported depth-3 robust cascades."""
+    from src.pyomo_cascade import generate_cascades
+    from src.pyomo_robust_cascade import build_scenarios, compute_domain_floors, solve_a3
+
+    cascades, params = generate_cascades(
+        synthetic_data, rho=0.75, max_cascades=60, include_three_stage=True
+    )
+    assert (cascades["depth"] == 3).any()
+    result = solve_a3(
+        synthetic_data,
+        cascades,
+        params["R"],
+        params["C"],
+        params["Esc"],
+        params["A_p"],
+        build_scenarios(synthetic_data),
+        compute_domain_floors(synthetic_data, multiplier=0.75),
+        K=3,
+        B=10.0,
+        Emax=1.0,
+        lambda_slack=0.1,
+        time_limit=20,
+    )
+
+    assert result["status"] == "invalid"
+    assert "depth-3" in result["message"]
+    assert result["diagnostics"]["status"] == "invalid"
+
+
+def test_a3_lexicographic_rejects_three_stage_cascades_until_esc3_is_supported(
+    synthetic_data,
+):
+    """Covers pre-solve rejection for unsupported depth-3 lexicographic cascades."""
+    from src.pyomo_cascade import generate_cascades
+    from src.pyomo_robust_cascade import (
+        build_scenarios,
+        compute_domain_floors,
+        solve_a3_lexicographic,
+    )
+
+    cascades, params = generate_cascades(
+        synthetic_data, rho=0.75, max_cascades=60, include_three_stage=True
+    )
+    assert (cascades["depth"] == 3).any()
+    result = solve_a3_lexicographic(
+        synthetic_data,
+        cascades,
+        params["R"],
+        params["C"],
+        params["Esc"],
+        params["A_p"],
+        build_scenarios(synthetic_data),
+        compute_domain_floors(synthetic_data, multiplier=0.75),
+        K=3,
+        B=10.0,
+        Emax=1.0,
+        time_limit=20,
+    )
+
+    assert result["status"] == "invalid"
+    assert "depth-3" in result["message"]
+    assert result["diagnostics"]["status"] == "invalid"

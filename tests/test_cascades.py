@@ -108,3 +108,80 @@ def test_a2_generalizes_a1_on_synthetic_data(synthetic_data):
 
     assert a2["status"] in {"optimal", "feasible", "feasible_time_limited"}
     assert a2["avg_quality"] + 1e-8 >= a1["avg_quality"]
+
+
+def test_three_stage_parameters_are_bounded_when_enabled(synthetic_data):
+    from src.cascade_generation import generate_cascades
+
+    cascades, params = generate_cascades(
+        synthetic_data, rho=0.75, max_cascades=60, include_three_stage=True
+    )
+    three_stage_ids = set(cascades.loc[cascades["depth"] == 3, "cascade_id"])
+    if not three_stage_ids:
+        pytest.skip(
+            "Synthetic data does not produce a three-stage candidate under the configured filter."
+        )
+
+    for key, value in params["R"].items():
+        if key[1] in three_stage_ids:
+            assert 0.0 <= value <= 1.0
+            assert params["C"][key] >= 0.0
+            assert params["Esc"][key] >= 0.0
+
+
+def test_three_stage_opt_in_does_not_reduce_two_stage_count(synthetic_data):
+    from src.cascade_generation import generate_cascades
+
+    default_cascades, _ = generate_cascades(synthetic_data, rho=0.75, max_cascades=6)
+    opt_in_cascades, _ = generate_cascades(
+        synthetic_data, rho=0.75, max_cascades=6, include_three_stage=True
+    )
+
+    default_two_stage = int((default_cascades["depth"] == 2).sum())
+    opt_in_two_stage = int((opt_in_cascades["depth"] == 2).sum())
+    assert opt_in_two_stage >= default_two_stage
+
+
+def test_three_stage_candidate_summaries_are_computed(synthetic_data):
+    from src.cascade_generation import generate_three_stage_cascades
+
+    cascades = generate_three_stage_cascades(synthetic_data, rho=0.75, max_three_stage=20)
+    if cascades.empty:
+        pytest.skip(
+            "Synthetic data does not produce a three-stage candidate under the configured filter."
+        )
+
+    assert (cascades["avg_R"] >= 0.0).all()
+    assert (cascades["avg_C"] >= 0.0).all()
+    assert (cascades[["avg_R", "avg_C", "avg_Esc"]].sum(axis=1) > 0.0).any()
+
+
+def test_cascade_metrics_use_esc3_for_expected_third_stage_usage(synthetic_data):
+    from src.cascade_generation import generate_cascades
+    from src.metrics import cascade_assignment_metrics
+
+    cascades, params = generate_cascades(
+        synthetic_data, rho=0.75, max_cascades=60, include_three_stage=True
+    )
+    three_stage = cascades[cascades["depth"] == 3]
+    if three_stage.empty:
+        pytest.skip(
+            "Synthetic data does not produce a three-stage candidate under the configured filter."
+        )
+
+    cascade_id = three_stage.iloc[0]["cascade_id"]
+    assignment = {prompt: cascade_id for prompt in synthetic_data["P"]}
+    result = cascade_assignment_metrics(
+        synthetic_data,
+        cascades,
+        assignment,
+        params["R"],
+        params["C"],
+        params["Esc"],
+        "three-stage-test",
+        esc3_param=params["Esc3"],
+    )
+
+    m3 = three_stage.iloc[0]["m3"]
+    expected_usage = sum(params["Esc3"][(prompt, cascade_id)] for prompt in synthetic_data["P"])
+    assert result["expected_stage3_usage"][m3] == pytest.approx(expected_usage)

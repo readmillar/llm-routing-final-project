@@ -25,7 +25,16 @@ def assignment_metrics(data, assignment, policy):
     }
 
 
-def cascade_assignment_metrics(data, cascades, assignment, r_param, c_param, esc_param, policy):
+def cascade_assignment_metrics(
+    data,
+    cascades,
+    assignment,
+    r_param,
+    c_param,
+    esc_param,
+    policy,
+    esc3_param=None,
+):
     """Summarize a prompt-to-cascade assignment using precomputed parameters."""
     n = len(data["P"])
     cascade_lookup = cascades.set_index("cascade_id")
@@ -46,7 +55,8 @@ def cascade_assignment_metrics(data, cascades, assignment, r_param, c_param, esc
         if isinstance(row.get("m2", ""), str) and row["m2"]:
             expected_second[row["m2"]] += esc_param[(prompt, cascade_id)]
         if isinstance(row.get("m3", ""), str) and row["m3"]:
-            expected_third[row["m3"]] += esc_param[(prompt, cascade_id)]
+            reach_lookup = esc3_param if esc3_param is not None else esc_param
+            expected_third[row["m3"]] += reach_lookup[(prompt, cascade_id)]
     return {
         "policy": policy,
         "cascade_assignment": dict(assignment),

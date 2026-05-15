@@ -183,6 +183,22 @@ def _a3_infeasible_k_result(policy):
     }
 
 
+def _has_depth_three_cascades(cascades):
+    """Return True when candidate rows include unsupported depth-3 cascades."""
+    return "depth" in cascades.columns and bool((cascades["depth"] == 3).any())
+
+
+def _a3_invalid_depth_three_result(policy):
+    """Return the standard pre-solve invalid result for unsupported depth-3 cascades."""
+    message = "A3 does not support depth-3 cascades until Esc3 reach accounting is wired."
+    return {
+        "policy": policy,
+        "status": "invalid",
+        "message": message,
+        "diagnostics": pre_solve_diagnostics(policy, "invalid", message),
+    }
+
+
 def _termination_message(results):
     return str(results.solver.termination_condition)
 
@@ -343,6 +359,8 @@ def solve_a3(
     policy = f"A3 K={K} B={B:.6g} Emax={Emax:g}"
     if K < 2:
         return _a3_infeasible_k_result(policy)
+    if _has_depth_three_cascades(cascades):
+        return _a3_invalid_depth_three_result(policy)
 
     model, _meta = build_a3_model(
         data,
@@ -422,6 +440,10 @@ def solve_a3_lexicographic(
     policy = f"A3-lex K={K} B={B:.6g} Emax={Emax:g}"
     if K < 2:
         return _a3_infeasible_k_result(policy)
+    if _has_depth_three_cascades(cascades):
+        result = _a3_invalid_depth_three_result(policy)
+        result["lexicographic_passes"] = []
+        return result
 
     passes = []
     model, meta = build_a3_model(

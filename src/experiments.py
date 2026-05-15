@@ -449,6 +449,7 @@ def run_experiments(
                         B=B,
                         Emax=Emax,
                         time_limit=time_limit,
+                        Esc3=params.get("Esc3"),
                     )
                     result["budget_name"] = budget_name
                     a2_results.append(result)

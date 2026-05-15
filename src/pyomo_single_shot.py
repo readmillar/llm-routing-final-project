@@ -1,7 +1,13 @@
 import pyomo.environ as pyo
 
 from .metrics import assignment_metrics
-from .solver_utils import has_solution, no_solver_result, result_status, solve_model
+from .solver_utils import (
+    has_solution,
+    no_solver_result,
+    pre_solve_diagnostics,
+    result_status,
+    solve_model,
+)
 
 
 def _minimum_assignment_cost(data):
@@ -12,12 +18,20 @@ def solve_a1(data, K, B, time_limit=300):
     """Solve A1 single-shot portfolio MILP over observed prompt-model pairs."""
     policy = f"A1 K={K} B={B:.6g}"
     if K <= 0:
-        return {"policy": policy, "status": "infeasible", "message": "K must be positive"}
-    if B + 1e-12 < _minimum_assignment_cost(data):
+        message = "K must be positive"
         return {
             "policy": policy,
             "status": "infeasible",
-            "message": "Budget below cheapest assignment",
+            "message": message,
+            "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
+        }
+    if B + 1e-12 < _minimum_assignment_cost(data):
+        message = "Budget below cheapest assignment"
+        return {
+            "policy": policy,
+            "status": "infeasible",
+            "message": message,
+            "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
         }
 
     model = pyo.ConcreteModel()
@@ -47,9 +61,9 @@ def solve_a1(data, K, B, time_limit=300):
         sense=pyo.maximize,
     )
 
-    solver_name, results = solve_model(model, time_limit=time_limit)
+    solver_name, results, diagnostics = solve_model(model, time_limit=time_limit, policy=policy)
     if solver_name is None:
-        return no_solver_result(policy)
+        return no_solver_result(policy, diagnostics)
     status = result_status(results)
     if not has_solution(status):
         return {
@@ -57,6 +71,7 @@ def solve_a1(data, K, B, time_limit=300):
             "status": status,
             "solver": solver_name,
             "message": str(results.solver.termination_condition),
+            "diagnostics": diagnostics,
         }
 
     assignment = {}
@@ -72,12 +87,14 @@ def solve_a1(data, K, B, time_limit=300):
             "status": status,
             "solver": solver_name,
             "message": "Solver stopped before loading a complete incumbent solution",
+            "diagnostics": diagnostics,
         }
     metrics = assignment_metrics(data, assignment, policy)
     metrics.update(
         {
-            "status": "feasible" if status == "time_limited" else status,
+            "status": "feasible" if status == "feasible_time_limited" else status,
             "solver": solver_name,
+            "diagnostics": diagnostics,
             "K": K,
             "B": B,
             "selected_models": [

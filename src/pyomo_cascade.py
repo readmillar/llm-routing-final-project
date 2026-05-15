@@ -2,7 +2,13 @@ import pandas as pd
 import pyomo.environ as pyo
 
 from .metrics import cascade_assignment_metrics
-from .solver_utils import has_solution, no_solver_result, result_status, solve_model
+from .solver_utils import (
+    has_solution,
+    no_solver_result,
+    pre_solve_diagnostics,
+    result_status,
+    solve_model,
+)
 
 
 def summarize_models(data):
@@ -118,7 +124,13 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
     """Solve A2 two-stage cascade MILP."""
     policy = f"A2 K={K} B={B:.6g} Emax={Emax:g}"
     if K < 2:
-        return {"policy": policy, "status": "infeasible", "message": "A2 requires K >= 2"}
+        message = "A2 requires K >= 2"
+        return {
+            "policy": policy,
+            "status": "infeasible",
+            "message": message,
+            "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
+        }
     cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2"]].to_dict("index")
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])
     n_prompts = len(data["P"])
@@ -151,9 +163,9 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
         expr=sum(R[p, a] * model.z[p, a] for p, a in pa) / n_prompts, sense=pyo.maximize
     )
 
-    solver_name, results = solve_model(model, time_limit=time_limit)
+    solver_name, results, diagnostics = solve_model(model, time_limit=time_limit, policy=policy)
     if solver_name is None:
-        return no_solver_result(policy)
+        return no_solver_result(policy, diagnostics)
     status = result_status(results)
     if not has_solution(status):
         return {
@@ -161,6 +173,7 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
             "status": status,
             "solver": solver_name,
             "message": str(results.solver.termination_condition),
+            "diagnostics": diagnostics,
         }
 
     assignment = {}
@@ -176,12 +189,14 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
             "status": status,
             "solver": solver_name,
             "message": "Solver stopped before loading a complete incumbent solution",
+            "diagnostics": diagnostics,
         }
     metrics = cascade_assignment_metrics(data, cascades, assignment, R, C, Esc, policy)
     metrics.update(
         {
-            "status": "feasible" if status == "time_limited" else status,
+            "status": "feasible" if status == "feasible_time_limited" else status,
             "solver": solver_name,
+            "diagnostics": diagnostics,
             "K": K,
             "B": B,
             "Emax": Emax,

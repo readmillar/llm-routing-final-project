@@ -11,12 +11,20 @@ from .baselines import (
 )
 from .complementarity import estimate_pair_recovery, recovery_lookup_from_frame
 from .load_data import load_dataset
-from .metrics import domain_quality_rows, records_from_result, scenario_quality, usage_rows
+from .metrics import (
+    domain_quality_rows,
+    records_from_result,
+    scenario_quality,
+    usage_concentration_rows,
+    usage_rows,
+)
 from .model_metadata import load_or_create_metadata, summarize_provider_pool
+from .pareto import pareto_frontier
 from .plots import make_all_plots
 from .pyomo_cascade import generate_cascades, solve_a2
 from .pyomo_robust_cascade import build_scenarios, compute_domain_floors, solve_a3
 from .pyomo_single_shot import solve_a1
+from .report_artifacts import write_report_numbers, write_report_tables
 from .solver_utils import write_json
 from .stress_testing import evaluate_policy_under_scenarios, sample_dirichlet_scenarios
 
@@ -26,6 +34,8 @@ STATUS_RANK = {
     "feasible_time_limited": 2,
     "ok": 1,
 }
+
+SUCCESS_STATUSES = {"ok", "optimal", "feasible", "feasible_time_limited"}
 
 REPORT_COMPARISON_COLUMNS = [
     "policy",
@@ -88,6 +98,29 @@ def _summary_row(result, **extra):
     return records_from_result(result, extra)
 
 
+def _successful(df):
+    """Return solved rows with numeric cost and quality for comparisons."""
+    if df.empty:
+        return df.copy()
+    status = df.get("status", pd.Series(index=df.index, dtype=object)).fillna("ok")
+    avg_cost = df.get("avg_cost", pd.Series(index=df.index, dtype=object))
+    avg_quality = df.get("avg_quality", pd.Series(index=df.index, dtype=object))
+    mask = status.isin(SUCCESS_STATUSES)
+    mask &= pd.to_numeric(avg_cost, errors="coerce").notna()
+    mask &= pd.to_numeric(avg_quality, errors="coerce").notna()
+    return df.loc[mask].copy()
+
+
+def _is_successful_result(result):
+    """Return True for reportable results with solved status and metrics."""
+    return (
+        isinstance(result, dict)
+        and result.get("status", "ok") in SUCCESS_STATUSES
+        and pd.notna(pd.to_numeric(result.get("avg_cost"), errors="coerce"))
+        and pd.notna(pd.to_numeric(result.get("avg_quality"), errors="coerce"))
+    )
+
+
 def _total_slack(result):
     return float(sum((result.get("domain_slacks") or {}).values()))
 
@@ -140,7 +173,7 @@ def _float_equals(left, right):
 
 def build_report_main_comparison(rows, K=5, budget_name="B_mid", Emax=0.75):
     """Build apples-to-apples policy rows for the report comparison table."""
-    df = pd.DataFrame(rows)
+    df = _successful(pd.DataFrame(rows))
     if df.empty:
         return pd.DataFrame(columns=REPORT_COMPARISON_COLUMNS)
     keep = []
@@ -171,6 +204,25 @@ def _best_result(results):
     return sorted(
         feasible, key=lambda r: (r.get("avg_quality", -1), -r.get("avg_cost", 1e9)), reverse=True
     )[0]
+
+
+def _best_successful_result(results):
+    feasible = [r for r in results if _is_successful_result(r)]
+    if not feasible:
+        return None
+    return sorted(
+        feasible, key=lambda r: (r.get("avg_quality", -1), -r.get("avg_cost", 1e9)), reverse=True
+    )[0]
+
+
+def select_report_policy(a3_results, a2_results, a1_results):
+    """Choose a report headline policy, returning None when no result is reportable."""
+    a3_successful = [result for result in a3_results if _is_successful_result(result)]
+    return (
+        select_report_a3_policy(a3_successful)
+        or _best_successful_result(a2_results)
+        or _best_successful_result(a1_results)
+    )
 
 
 def _nonempty_models(models):
@@ -207,6 +259,7 @@ def _has_assignment_result(result, key):
 def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, output_rows=None):
     domain_rows = []
     usage = []
+    usage_concentration = []
     scenario_rows = []
     for result in policy_results:
         if result is None or result.get("status") not in {"ok", "optimal", "feasible"}:
@@ -222,6 +275,9 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
             for row in usage_rows(policy, result["model_usage"], len(data["P"]), "single"):
                 row["policy_label"] = policy_label
                 usage.append(row)
+            row = usage_concentration_rows(policy, result["model_usage"], "single")
+            row["policy_label"] = policy_label
+            usage_concentration.append(row)
             for name, scenario in scenarios.items():
                 weights = scenario["prompt_weights"]
                 scenario_rows.append(
@@ -237,6 +293,9 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
             for row in usage_rows(policy, result.get("stage1_usage", {}), len(data["P"]), "stage1"):
                 row["policy_label"] = policy_label
                 usage.append(row)
+            row = usage_concentration_rows(policy, result.get("stage1_usage", {}), "stage1")
+            row["policy_label"] = policy_label
+            usage_concentration.append(row)
             for row in usage_rows(
                 policy,
                 result.get("expected_stage2_usage", {}),
@@ -245,6 +304,11 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
             ):
                 row["policy_label"] = policy_label
                 usage.append(row)
+            row = usage_concentration_rows(
+                policy, result.get("expected_stage2_usage", {}), "expected_stage2"
+            )
+            row["policy_label"] = policy_label
+            usage_concentration.append(row)
             for name, scenario in scenarios.items():
                 weights = scenario["prompt_weights"]
                 scenario_rows.append(
@@ -258,6 +322,8 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
                 )
     output_rows["domain"].extend(domain_rows)
     output_rows["usage"].extend(usage)
+    if "usage_concentration" in output_rows:
+        output_rows["usage_concentration"].extend(usage_concentration)
     output_rows["scenario"].extend(scenario_rows)
 
 
@@ -279,7 +345,7 @@ def run_experiments(
     recovery_lookup = recovery_lookup_from_frame(recovery_df)
     budgets, cheapest, best = compute_budget_grid(data, root)
     scenarios = build_scenarios(data)
-    table_rows = {"domain": [], "usage": [], "scenario": []}
+    table_rows = {"domain": [], "usage": [], "usage_concentration": [], "scenario": []}
     audit_rows = []
 
     baseline_rows = [
@@ -453,7 +519,7 @@ def run_experiments(
                         Emax=result.get("Emax"),
                     )
                 )
-            result_rows = {"domain": [], "usage": [], "scenario": []}
+            result_rows = {"domain": [], "usage": [], "usage_concentration": [], "scenario": []}
             _record_solution_tables(
                 [result],
                 data,
@@ -611,6 +677,57 @@ def run_experiments(
                 ).to_dict("records")
             )
     pd.DataFrame(stress_rows).to_csv(root / "tables" / "stress_test_results.csv", index=False)
+    summary_rows = [
+        _summary_row(r, family="baseline") for r in [cheapest, best]
+    ] + [_summary_row(r, family="A0", alpha=r.get("alpha")) for r in a0_results]
+    summary_rows.extend(
+        _summary_row(
+            r,
+            family="A1",
+            K=r.get("K"),
+            B=r.get("B"),
+            budget_name=r.get("budget_name"),
+        )
+        for r in a1_results
+    )
+    summary_rows.extend(
+        _summary_row(
+            r,
+            family="A2",
+            K=r.get("K"),
+            B=r.get("B"),
+            Emax=r.get("Emax"),
+            budget_name=r.get("budget_name"),
+        )
+        for r in a2_results
+    )
+    summary_rows.extend(
+        _summary_row(
+            r,
+            family="A3",
+            grid_id=r.get("grid_id"),
+            K=r.get("K"),
+            B=r.get("B"),
+            Emax=r.get("Emax"),
+            budget_name=r.get("budget_name"),
+            eta=r.get("eta"),
+            total_slack=r.get("total_slack"),
+            floor_multiplier=r.get("floor_multiplier"),
+            lambda_slack=r.get("lambda_slack"),
+            rho=r.get("rho"),
+        )
+        for r in a3_results
+    )
+    all_summary = pd.DataFrame(summary_rows)
+    pareto_frontier(_successful(all_summary)).to_csv(
+        root / "tables" / "pareto_frontier.csv", index=False
+    )
+    report_main = build_report_main_comparison(summary_rows, K=5, budget_name="B_mid", Emax=0.75)
+    report_main.to_csv(root / "tables" / "report_main_comparison.csv", index=False)
+    chosen = select_report_policy(a3_results, a2_results, a1_results)
+    if chosen is not None:
+        write_report_numbers(root, chosen)
+    write_report_tables(root, report_main, pd.DataFrame(table_rows["domain"]))
     summary = [
         _summary_row(r, family=r["policy"].split()[0]) for r in representative if r is not None
     ]
@@ -618,6 +735,9 @@ def run_experiments(
     pd.DataFrame(table_rows["domain"]).to_csv(root / "tables" / "domain_quality.csv", index=False)
     pd.DataFrame(table_rows["usage"]).to_csv(
         root / "tables" / "selected_model_usage.csv", index=False
+    )
+    pd.DataFrame(table_rows["usage_concentration"]).to_csv(
+        root / "tables" / "usage_concentration.csv", index=False
     )
     pd.DataFrame(table_rows["scenario"]).to_csv(
         root / "tables" / "scenario_quality.csv", index=False

@@ -328,3 +328,84 @@ def test_matched_report_table_contains_same_k_budget_and_emax():
     assert set(table["policy"]) == {"A1", "A2", "A3"}
     assert set(table["K"].dropna()) == {5}
     assert set(table["budget_name"].dropna()) == {"B_mid"}
+
+
+def test_matched_report_table_excludes_infeasible_metricless_rows():
+    from src.experiments import build_report_main_comparison
+
+    rows = [
+        {
+            "policy": "A2 feasible",
+            "family": "A2",
+            "K": 5,
+            "budget_name": "B_mid",
+            "Emax": 0.75,
+            "status": "optimal",
+            "avg_quality": 0.9,
+            "avg_cost": 0.3,
+        },
+        {
+            "policy": "A2 no solution",
+            "family": "A2",
+            "K": 5,
+            "budget_name": "B_mid",
+            "Emax": 0.75,
+            "status": "no_solution",
+            "avg_quality": None,
+            "avg_cost": None,
+        },
+    ]
+
+    table = build_report_main_comparison(rows, K=5, budget_name="B_mid", Emax=0.75)
+
+    assert set(table["policy"]) == {"A2 feasible"}
+
+
+def test_report_policy_selection_returns_none_without_successful_fallback():
+    from src.experiments import select_report_policy
+
+    chosen = select_report_policy(
+        a3_results=[],
+        a2_results=[{"policy": "A2 no solution", "status": "no_solution"}],
+        a1_results=[{"policy": "A1 infeasible", "status": "infeasible"}],
+    )
+
+    assert chosen is None
+
+
+def test_pareto_filter_removes_dominated_points():
+    import pandas as pd
+
+    from src.pareto import pareto_frontier
+
+    df = pd.DataFrame(
+        [
+            {"policy": "cheap_good", "avg_cost": 1.0, "avg_quality": 0.8},
+            {"policy": "expensive_bad", "avg_cost": 2.0, "avg_quality": 0.7},
+            {"policy": "expensive_best", "avg_cost": 3.0, "avg_quality": 0.9},
+        ]
+    )
+
+    frontier = pareto_frontier(df)
+
+    assert set(frontier["policy"]) == {"cheap_good", "expensive_best"}
+
+
+def test_report_numbers_markdown_contains_chosen_policy(tmp_path):
+    from src.report_artifacts import write_report_numbers
+
+    path = write_report_numbers(
+        tmp_path,
+        {
+            "policy": "A3 robust cascade",
+            "avg_quality": 0.9,
+            "avg_cost": 0.2,
+            "eta": 0.85,
+            "escalation_rate": 0.4,
+            "selected_models": ["m1", "m2"],
+        },
+    )
+
+    text = path.read_text()
+    assert "Chosen policy: A3 robust cascade" in text
+    assert "Average quality: 0.9000" in text

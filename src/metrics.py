@@ -1,5 +1,7 @@
 from collections import Counter
 
+import numpy as np
+
 
 def assignment_metrics(data, assignment, policy):
     """Summarize a single-shot prompt-to-model assignment."""
@@ -103,6 +105,37 @@ def usage_rows(policy, usage, total, stage="single"):
             }
         )
     return rows
+
+
+def usage_concentration_rows(policy, usage, stage):
+    """Compute entropy, Gini, top shares, and active count from usage counts."""
+    values = [float(v) for v in usage.values() if float(v) > 0]
+    total = sum(values)
+    if total <= 0:
+        return {
+            "policy": policy,
+            "stage": stage,
+            "model_usage_entropy": 0.0,
+            "model_usage_gini": 0.0,
+            "top_1_model_share": 0.0,
+            "top_3_model_share": 0.0,
+            "num_active_models": 0,
+        }
+    shares = sorted([v / total for v in values], reverse=True)
+    entropy = -sum(share * np.log(share) for share in shares)
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    weighted_sum = sum((i + 1) * value for i, value in enumerate(sorted_values))
+    gini = (2 * weighted_sum) / (n * total) - (n + 1) / n
+    return {
+        "policy": policy,
+        "stage": stage,
+        "model_usage_entropy": float(entropy),
+        "model_usage_gini": float(gini),
+        "top_1_model_share": float(shares[0]),
+        "top_3_model_share": float(sum(shares[:3])),
+        "num_active_models": int(n),
+    }
 
 
 def records_from_result(result, extra=None):

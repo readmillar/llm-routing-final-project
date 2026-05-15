@@ -199,7 +199,7 @@ def main(argv=None):
                 audit_single_shot_result(data, result, K=result.get("K"), B=result.get("B"))
             )
     cascades = _load_saved_cascades(root)
-    for file_name in ["a2_solutions.json", "a3_solutions.json"]:
+    for file_name in ["a2_solutions.json", "a3_solutions.json", "a4_solutions.json"]:
         payload = _load_json(root / "solutions" / file_name)
         for result in _cascade_results_from_payload(payload):
             rows.extend(_audit_saved_cascade_result(data, cascades, result))

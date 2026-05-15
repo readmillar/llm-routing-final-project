@@ -74,6 +74,53 @@ def test_cli_audits_saved_cascade_solution(synthetic_csv, synthetic_data, tmp_pa
     assert audit["passed"].all()
 
 
+def test_cli_audits_saved_a4_cascade_solution(synthetic_csv, synthetic_data, tmp_path):
+    from src.audit import main
+    from src.cascade_generation import generate_cascades
+    from src.solver_utils import write_json
+
+    root = tmp_path / "outputs"
+    (root / "solutions").mkdir(parents=True, exist_ok=True)
+    (root / "tables").mkdir(parents=True, exist_ok=True)
+    cascades, params = generate_cascades(synthetic_data, rho=0.75, max_cascades=20)
+    assignment = {prompt: params["A_p"][prompt][0] for prompt in synthetic_data["P"]}
+    selected_models = sorted(
+        {
+            cascades.set_index("cascade_id").loc[cascade_id, "m1"]
+            for cascade_id in assignment.values()
+        }
+    )
+    cascades.to_csv(root / "tables" / "cascade_candidates.csv", index=False)
+    write_json(
+        root / "solutions" / "a4_solutions.json",
+        {
+            "synthetic-a4": {
+                "policy": "synthetic-a4",
+                "status": "optimal",
+                "cascade_assignment": assignment,
+                "selected_models": selected_models,
+                "K": len(selected_models),
+                "B": 10.0,
+                "Emax": 1.0,
+            }
+        },
+    )
+
+    main(["--data", str(synthetic_csv), "--output-dir", str(root)])
+
+    audit = __import__("pandas").read_csv(root / "tables" / "solution_audit.csv")
+    assert set(audit["policy"]) == {"synthetic-a4"}
+    assert set(audit["check_name"]) >= {
+        "assignment_completeness",
+        "cascade_ids_in_saved_candidates",
+        "observed_pairs_only",
+        "selected_model_linking",
+        "budget",
+        "escalation",
+    }
+    assert audit["passed"].all()
+
+
 def test_cli_reports_missing_saved_cascade_id(synthetic_csv, synthetic_data, tmp_path):
     import pytest
 

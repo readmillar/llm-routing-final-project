@@ -29,6 +29,7 @@ from .pyomo_robust_cascade import (
     solve_a3_lexicographic,
 )
 from .pyomo_single_shot import solve_a1
+from .pyomo_tail_risk import solve_a4_cvar_cascade
 from .report_artifacts import write_report_numbers, write_report_tables
 from .solver_utils import write_json
 from .stress_testing import evaluate_policy_under_scenarios, sample_dirichlet_scenarios
@@ -61,6 +62,23 @@ REPORT_COMPARISON_COLUMNS = [
     "status",
     "mip_gap",
     "wall_time_sec",
+]
+
+A4_RESULT_COLUMNS = [
+    "policy",
+    "status",
+    "avg_cost",
+    "avg_quality",
+    "escalation_rate",
+    "selected_models",
+    "family",
+    "K",
+    "B",
+    "Emax",
+    "budget_name",
+    "beta",
+    "lambda_cvar",
+    "cvar_shortfall",
 ]
 
 
@@ -261,6 +279,17 @@ def _has_assignment_result(result, key):
     )
 
 
+def should_run_a4(skip_a3=False):
+    """Return whether the matched A4 CVaR policy should run for this experiment."""
+    del skip_a3
+    return True
+
+
+def needs_cascade_candidates(skip_a2=False, skip_a3=False):
+    """Return whether run_experiments needs prompt-feasible cascade candidates."""
+    return (not skip_a2) or (not skip_a3) or should_run_a4(skip_a3=skip_a3)
+
+
 def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, output_rows=None):
     domain_rows = []
     usage = []
@@ -398,7 +427,8 @@ def run_experiments(
     cascades = pd.DataFrame()
     params = {"A_p": {}, "R": {}, "C": {}, "Esc": {}}
     a2_results = []
-    if not skip_a2 or not skip_a3:
+    run_a4 = should_run_a4(skip_a3=skip_a3)
+    if needs_cascade_candidates(skip_a2=skip_a2, skip_a3=skip_a3):
         cascades, params = generate_cascades(
             data, rho=0.75, max_cascades=max_cascades, recovery_lookup=recovery_lookup
         )
@@ -694,6 +724,60 @@ def run_experiments(
         root / "tables" / "a3_lexicographic_passes.csv", index=False
     )
 
+    a4_results = []
+    if run_a4:
+        floors = compute_domain_floors(data, multiplier=0.85)
+        result = solve_a4_cvar_cascade(
+            data,
+            cascades,
+            params["R"],
+            params["C"],
+            params["Esc"],
+            params["A_p"],
+            floors,
+            K=5,
+            B=budgets["B_mid"],
+            Emax=0.75,
+            beta=0.9,
+            lambda_cvar=0.1,
+            time_limit=time_limit,
+        )
+        result["budget_name"] = "B_mid"
+        a4_results.append(result)
+        if _has_assignment_result(result, "cascade_assignment"):
+            audit_rows.extend(
+                audit_cascade_result(
+                    data,
+                    cascades,
+                    params,
+                    result,
+                    K=result.get("K"),
+                    B=result.get("B"),
+                    Emax=result.get("Emax"),
+                )
+            )
+        _record_solution_tables(
+            a4_results, data, scenarios, params["R"], params["C"], output_rows=table_rows
+        )
+        write_json(root / "solutions" / "a4_solutions.json", {r["policy"]: r for r in a4_results})
+    pd.DataFrame(
+        [
+            _summary_row(
+                r,
+                family="A4",
+                K=r.get("K"),
+                B=r.get("B"),
+                Emax=r.get("Emax"),
+                budget_name=r.get("budget_name"),
+                beta=r.get("beta"),
+                lambda_cvar=r.get("lambda_cvar"),
+                cvar_shortfall=r.get("cvar_shortfall"),
+            )
+            for r in a4_results
+        ],
+        columns=A4_RESULT_COLUMNS,
+    ).to_csv(root / "tables" / "a4_cvar_results.csv", index=False)
+
     representative = [
         cheapest,
         best,
@@ -701,6 +785,7 @@ def run_experiments(
         _best_result(a1_results),
         _best_result(a2_results),
         select_report_a3_policy(a3_results),
+        _best_result(a4_results),
     ]
     provider_rows = []
     for result in representative:
@@ -745,9 +830,9 @@ def run_experiments(
                 ).to_dict("records")
             )
     pd.DataFrame(stress_rows).to_csv(root / "tables" / "stress_test_results.csv", index=False)
-    summary_rows = [
-        _summary_row(r, family="baseline") for r in [cheapest, best]
-    ] + [_summary_row(r, family="A0", alpha=r.get("alpha")) for r in a0_results]
+    summary_rows = [_summary_row(r, family="baseline") for r in [cheapest, best]] + [
+        _summary_row(r, family="A0", alpha=r.get("alpha")) for r in a0_results
+    ]
     summary_rows.extend(
         _summary_row(
             r,
@@ -785,6 +870,20 @@ def run_experiments(
             rho=r.get("rho"),
         )
         for r in a3_results
+    )
+    summary_rows.extend(
+        _summary_row(
+            r,
+            family="A4",
+            K=r.get("K"),
+            B=r.get("B"),
+            Emax=r.get("Emax"),
+            budget_name=r.get("budget_name"),
+            beta=r.get("beta"),
+            lambda_cvar=r.get("lambda_cvar"),
+            cvar_shortfall=r.get("cvar_shortfall"),
+        )
+        for r in a4_results
     )
     all_summary = pd.DataFrame(summary_rows)
     pareto_frontier(_successful(all_summary)).to_csv(

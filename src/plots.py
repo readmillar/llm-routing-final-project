@@ -146,6 +146,7 @@ def plot_cost_quality_frontier(root):
         _read_csv(tables / "a1_results.csv"),
         _read_csv(tables / "a2_results.csv"),
         _read_csv(tables / "a3_results.csv"),
+        _read_csv(tables / "a4_cvar_results.csv"),
     ]
     df = _successful(pd.concat([f for f in frames if not f.empty], ignore_index=True))
     plt.figure(figsize=(8, 5.5))
@@ -449,6 +450,22 @@ def plot_usage_concentration(root):
     plt.close()
 
 
+def plot_cvar_tradeoff(root):
+    cvar = _read_csv(root / "tables" / "a4_cvar_results.csv")
+    plt.figure(figsize=(7.5, 5))
+    if not cvar.empty:
+        cvar = _numeric_complete_rows(cvar, ["cvar_shortfall", "avg_quality"])
+        if not cvar.empty:
+            plt.scatter(cvar["cvar_shortfall"], cvar["avg_quality"], s=60)
+        plt.xlabel("CVaR shortfall")
+        plt.ylabel("Average quality")
+    plt.title("Tail-risk tradeoff")
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(root / "figures" / "cvar_tradeoff.png", dpi=220)
+    plt.close()
+
+
 def plot_cascade_flow(root):
     """Plot the most common first-stage to second-stage cascade assignments."""
     solutions = root / "solutions" / "a2_solutions.json"
@@ -497,3 +514,4 @@ def make_all_plots(output_dir):
     plot_feasibility_map(root)
     plot_provider_traffic_share(root)
     plot_usage_concentration(root)
+    plot_cvar_tradeoff(root)

@@ -22,7 +22,12 @@ from .model_metadata import load_or_create_metadata, summarize_provider_pool
 from .pareto import pareto_frontier
 from .plots import make_all_plots
 from .pyomo_cascade import generate_cascades, solve_a2
-from .pyomo_robust_cascade import build_scenarios, compute_domain_floors, solve_a3
+from .pyomo_robust_cascade import (
+    build_scenarios,
+    compute_domain_floors,
+    solve_a3,
+    solve_a3_lexicographic,
+)
 from .pyomo_single_shot import solve_a1
 from .report_artifacts import write_report_numbers, write_report_tables
 from .solver_utils import write_json
@@ -448,6 +453,28 @@ def run_experiments(
         )
 
     a3_results = []
+    lex_columns = [
+        "pass",
+        "objective",
+        "status",
+        "solver",
+        "eta",
+        "total_slack",
+        "grid_id",
+        "K",
+        "B",
+        "Emax",
+        "budget_name",
+        "rho",
+        "floor_multiplier",
+        "message",
+        "mip_gap",
+        "termination_condition",
+        "wall_time_sec",
+        "best_bound",
+        "objective_value",
+    ]
+    lex_passes = []
     if not skip_a3:
         a3_grid = []
         rho_cascades = {}
@@ -581,6 +608,43 @@ def run_experiments(
             pd.DataFrame(columns=list(_summary_row({}, **best_report_extra).keys())).to_csv(
                 root / "tables" / "a3_best_report_policy.csv", index=False
             )
+        if best_report is not None:
+            rho = best_report.get("rho", 0.75)
+            if rho not in rho_cascades:
+                rho_cascades[rho] = generate_cascades(
+                    data,
+                    rho=rho,
+                    max_cascades=max_cascades,
+                    recovery_lookup=recovery_lookup,
+                )
+            cascades_rho, params_rho = rho_cascades[rho]
+            lex_result = solve_a3_lexicographic(
+                data,
+                cascades_rho,
+                params_rho["R"],
+                params_rho["C"],
+                params_rho["Esc"],
+                params_rho["A_p"],
+                scenarios,
+                compute_domain_floors(data, multiplier=best_report.get("floor_multiplier", 0.75)),
+                K=best_report["K"],
+                B=best_report["B"],
+                Emax=best_report["Emax"],
+                time_limit=time_limit,
+            )
+            lex_passes = lex_result.get("lexicographic_passes", [])
+            for row in lex_passes:
+                row.update(
+                    {
+                        "grid_id": best_report.get("grid_id"),
+                        "K": best_report.get("K"),
+                        "B": best_report.get("B"),
+                        "Emax": best_report.get("Emax"),
+                        "budget_name": best_report.get("budget_name"),
+                        "rho": best_report.get("rho"),
+                        "floor_multiplier": best_report.get("floor_multiplier"),
+                    }
+                )
         a3_rows = []
         slack_rows = []
         scenario_metric_rows = []
@@ -625,6 +689,10 @@ def run_experiments(
             root / "tables" / "a3_scenario_metrics.csv", index=False
         )
         write_json(root / "solutions" / "a3_solutions.json", {r["grid_id"]: r for r in a3_results})
+
+    pd.DataFrame(lex_passes, columns=lex_columns).to_csv(
+        root / "tables" / "a3_lexicographic_passes.csv", index=False
+    )
 
     representative = [
         cheapest,

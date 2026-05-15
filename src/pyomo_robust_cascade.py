@@ -50,7 +50,7 @@ def compute_domain_floors(data, multiplier=0.90):
     return floors
 
 
-def solve_a3(
+def build_a3_model(
     data,
     cascades,
     R,
@@ -62,28 +62,27 @@ def solve_a3(
     K,
     B,
     Emax,
-    lambda_slack=0.10,
-    time_limit=300,
     metadata=None,
     storage_cap_gb=None,
     provider_pool_caps=None,
     provider_traffic_caps=None,
 ):
-    """Solve A3 robust reliability-aware cascade MILP."""
-    policy = f"A3 K={K} B={B:.6g} Emax={Emax:g}"
-    if K < 2:
-        message = "A3 requires K >= 2"
-        return {
-            "policy": policy,
-            "status": "infeasible",
-            "message": message,
-            "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
-        }
+    """Build an unsolved A3 model and return metadata needed for extraction."""
     if metadata is not None:
         validate_metadata_covers_models(metadata, data["M"])
-
-    cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2"]].to_dict("index")
+    cascade_frame = cascades.set_index("cascade_id").copy()
+    if "m3" not in cascade_frame.columns:
+        cascade_frame["m3"] = ""
+    if "depth" not in cascade_frame.columns:
+        cascade_frame["depth"] = 2
+    cascade_lookup = cascade_frame[["m1", "m2", "m3", "depth"]].to_dict("index")
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])
+    stage_links = []
+    for prompt, cascade_id in pa:
+        row = cascade_lookup[cascade_id]
+        for model_name in [row["m1"], row["m2"], row["m3"]]:
+            if isinstance(model_name, str) and model_name:
+                stage_links.append((prompt, cascade_id, model_name))
     n_prompts = len(data["P"])
 
     model = pyo.ConcreteModel()
@@ -92,6 +91,7 @@ def solve_a3(
     model.D = pyo.Set(initialize=data["D"])
     model.S = pyo.Set(initialize=sorted(scenarios))
     model.PA = pyo.Set(dimen=2, initialize=pa)
+    model.PAM = pyo.Set(dimen=3, initialize=stage_links)
     model.z = pyo.Var(model.PA, within=pyo.Binary)
     model.y = pyo.Var(model.M, within=pyo.Binary)
     model.eta = pyo.Var(bounds=(0.0, 1.0))
@@ -100,14 +100,8 @@ def solve_a3(
     def assignment_rule(mdl, prompt):
         return sum(mdl.z[prompt, cascade_id] for cascade_id in A_p[prompt]) == 1
 
-    def link_first_rule(mdl, prompt, cascade_id):
-        return mdl.z[prompt, cascade_id] <= mdl.y[cascade_lookup[cascade_id]["m1"]]
-
-    def link_second_rule(mdl, prompt, cascade_id):
-        m2 = cascade_lookup[cascade_id]["m2"]
-        if not isinstance(m2, str) or not m2:
-            return pyo.Constraint.Skip
-        return mdl.z[prompt, cascade_id] <= mdl.y[m2]
+    def link_stage_rule(mdl, prompt, cascade_id, model_name):
+        return mdl.z[prompt, cascade_id] <= mdl.y[model_name]
 
     def scenario_quality_rule(mdl, scenario):
         weights = scenarios[scenario]["prompt_weights"]
@@ -126,8 +120,7 @@ def solve_a3(
         )
 
     model.assignment = pyo.Constraint(model.P, rule=assignment_rule)
-    model.link_first = pyo.Constraint(model.PA, rule=link_first_rule)
-    model.link_second = pyo.Constraint(model.PA, rule=link_second_rule)
+    model.link_stage = pyo.Constraint(model.PAM, rule=link_stage_rule)
     model.pool = pyo.Constraint(expr=sum(model.y[m] for m in model.M) <= K)
     if metadata is not None and storage_cap_gb is not None:
         storage = metadata.set_index("model")["estimated_storage_gb"].to_dict()
@@ -162,6 +155,8 @@ def solve_a3(
                     and provider[row["m2"]] == group
                 ):
                     terms.append(weights[p] * Esc[p, a] * mdl.z[p, a])
+                # Do not count m3 traffic until cascade generation exposes a proper
+                # reach-to-stage-3 probability. Esc is only first-stage escalation.
             if not terms:
                 return pyo.Constraint.Feasible
             return sum(terms) <= float(provider_traffic_caps[group])
@@ -173,24 +168,112 @@ def solve_a3(
     model.scenario_quality = pyo.Constraint(model.S, rule=scenario_quality_rule)
     model.scenario_cost = pyo.Constraint(model.S, rule=scenario_cost_rule)
     model.domain_floor = pyo.Constraint(model.D, rule=domain_floor_rule)
-    model.objective = pyo.Objective(
-        expr=model.eta - lambda_slack * sum(model.floor_slack[d] for d in model.D),
-        sense=pyo.maximize,
+    meta = {"pa": pa, "n_prompts": n_prompts, "cascade_lookup": cascade_lookup}
+    return model, meta
+
+
+def _a3_infeasible_k_result(policy):
+    """Return the standard pre-solve infeasible result for undersized A3 pools."""
+    message = "A3 requires K >= 2"
+    return {
+        "policy": policy,
+        "status": "infeasible",
+        "message": message,
+        "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
+    }
+
+
+def _termination_message(results):
+    return str(results.solver.termination_condition)
+
+
+def _diagnostic_value(diagnostics, key):
+    if not diagnostics:
+        return None
+    return diagnostics.get(key)
+
+
+def _a3_total_slack(model, domains):
+    values = []
+    for domain in domains:
+        value = pyo.value(model.floor_slack[domain], exception=False)
+        if value is None:
+            return None
+        values.append(float(value))
+    return sum(values)
+
+
+def _lex_pass_row(
+    pass_number,
+    objective,
+    status,
+    solver_name,
+    diagnostics,
+    eta=None,
+    total_slack=None,
+    message=None,
+):
+    """Build a CSV-safe row describing one lexicographic solve pass."""
+    return {
+        "pass": pass_number,
+        "objective": objective,
+        "status": status,
+        "solver": solver_name,
+        "eta": eta,
+        "total_slack": total_slack,
+        "message": message,
+        "mip_gap": _diagnostic_value(diagnostics, "mip_gap"),
+        "termination_condition": _diagnostic_value(diagnostics, "termination_condition"),
+        "wall_time_sec": _diagnostic_value(diagnostics, "wall_time_sec"),
+        "best_bound": _diagnostic_value(diagnostics, "best_bound"),
+        "objective_value": _diagnostic_value(diagnostics, "objective_value"),
+    }
+
+
+def _lex_incomplete_result(
+    policy,
+    pass_number,
+    status,
+    solver_name,
+    results,
+    diagnostics,
+    passes,
+):
+    """Return a clear result when a required lexicographic pass is not optimal."""
+    message = (
+        f"Lexicographic pass {pass_number} ended with status {status}; "
+        "optimality is required before proceeding."
     )
+    if results is not None:
+        message = f"{message} Termination: {_termination_message(results)}"
+    return {
+        "policy": policy,
+        "status": "lexicographic_incomplete",
+        "failed_pass": pass_number,
+        "failed_status": status,
+        "solver": solver_name,
+        "message": message,
+        "diagnostics": diagnostics,
+        "lexicographic_passes": passes,
+    }
 
-    solver_name, results, diagnostics = solve_model(model, time_limit=time_limit, policy=policy)
-    if solver_name is None:
-        return no_solver_result(policy, diagnostics)
-    status = result_status(results)
-    if not has_solution(status):
-        return {
-            "policy": policy,
-            "status": status,
-            "solver": solver_name,
-            "message": str(results.solver.termination_condition),
-            "diagnostics": diagnostics,
-        }
 
+def _extract_a3_solution(
+    data,
+    cascades,
+    R,
+    C,
+    Esc,
+    A_p,
+    scenarios,
+    model,
+    policy,
+    status,
+    solver_name,
+    diagnostics=None,
+    lambda_slack=None,
+):
+    """Read a solved A3 model into the public result dictionary."""
     assignment = {}
     for prompt in data["P"]:
         for cascade_id in A_p[prompt]:
@@ -206,6 +289,7 @@ def solve_a3(
             "message": "Solver stopped before loading a complete incumbent solution",
             "diagnostics": diagnostics,
         }
+
     base = cascade_assignment_metrics(data, cascades, assignment, R, C, Esc, policy)
     scenario_metrics = {}
     for name, scenario in scenarios.items():
@@ -220,9 +304,6 @@ def solve_a3(
             "status": "feasible" if status == "feasible_time_limited" else status,
             "solver": solver_name,
             "diagnostics": diagnostics,
-            "K": K,
-            "B": B,
-            "Emax": Emax,
             "eta": float(pyo.value(model.eta, exception=False) or 0.0),
             "selected_models": [
                 m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5
@@ -232,7 +313,296 @@ def solve_a3(
             "domain_slacks": {
                 d: float(pyo.value(model.floor_slack[d], exception=False) or 0.0) for d in data["D"]
             },
-            "lambda_slack": lambda_slack,
         }
     )
+    if lambda_slack is not None:
+        base["lambda_slack"] = lambda_slack
     return base
+
+
+def solve_a3(
+    data,
+    cascades,
+    R,
+    C,
+    Esc,
+    A_p,
+    scenarios,
+    floors,
+    K,
+    B,
+    Emax,
+    lambda_slack=0.10,
+    time_limit=300,
+    metadata=None,
+    storage_cap_gb=None,
+    provider_pool_caps=None,
+    provider_traffic_caps=None,
+):
+    """Solve A3 robust reliability-aware cascade MILP."""
+    policy = f"A3 K={K} B={B:.6g} Emax={Emax:g}"
+    if K < 2:
+        return _a3_infeasible_k_result(policy)
+
+    model, _meta = build_a3_model(
+        data,
+        cascades,
+        R,
+        C,
+        Esc,
+        A_p,
+        scenarios,
+        floors,
+        K,
+        B,
+        Emax,
+        metadata=metadata,
+        storage_cap_gb=storage_cap_gb,
+        provider_pool_caps=provider_pool_caps,
+        provider_traffic_caps=provider_traffic_caps,
+    )
+    model.objective = pyo.Objective(
+        expr=model.eta - lambda_slack * sum(model.floor_slack[d] for d in model.D),
+        sense=pyo.maximize,
+    )
+
+    solver_name, results, diagnostics = solve_model(model, time_limit=time_limit, policy=policy)
+    if solver_name is None:
+        return no_solver_result(policy, diagnostics)
+    status = result_status(results)
+    if not has_solution(status):
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": _termination_message(results),
+            "diagnostics": diagnostics,
+        }
+
+    result = _extract_a3_solution(
+        data,
+        cascades,
+        R,
+        C,
+        Esc,
+        A_p,
+        scenarios,
+        model,
+        policy,
+        status,
+        solver_name,
+        diagnostics,
+        lambda_slack=lambda_slack,
+    )
+    result.update({"K": K, "B": B, "Emax": Emax})
+    return result
+
+
+def solve_a3_lexicographic(
+    data,
+    cascades,
+    R,
+    C,
+    Esc,
+    A_p,
+    scenarios,
+    floors,
+    K,
+    B,
+    Emax,
+    time_limit=300,
+    epsilon=1e-6,
+    alpha_cost=0.01,
+    metadata=None,
+    storage_cap_gb=None,
+    provider_pool_caps=None,
+    provider_traffic_caps=None,
+):
+    """Solve A3 in three passes: max eta, min slack, then max quality minus cost."""
+    policy = f"A3-lex K={K} B={B:.6g} Emax={Emax:g}"
+    if K < 2:
+        return _a3_infeasible_k_result(policy)
+
+    passes = []
+    model, meta = build_a3_model(
+        data,
+        cascades,
+        R,
+        C,
+        Esc,
+        A_p,
+        scenarios,
+        floors,
+        K,
+        B,
+        Emax,
+        metadata=metadata,
+        storage_cap_gb=storage_cap_gb,
+        provider_pool_caps=provider_pool_caps,
+        provider_traffic_caps=provider_traffic_caps,
+    )
+
+    model.objective = pyo.Objective(expr=model.eta, sense=pyo.maximize)
+    solver_name, results, diagnostics = solve_model(
+        model, time_limit=time_limit, policy=f"{policy} pass=1"
+    )
+    if solver_name is None:
+        result = no_solver_result(policy, diagnostics)
+        result["lexicographic_passes"] = [
+            _lex_pass_row(
+                1, "max_eta", "no_solver", solver_name, diagnostics, message=result["message"]
+            )
+        ]
+        return result
+    status = result_status(results)
+    if not has_solution(status):
+        passes.append(
+            _lex_pass_row(
+                1,
+                "max_eta",
+                status,
+                solver_name,
+                diagnostics,
+                message=_termination_message(results),
+            )
+        )
+        return _lex_incomplete_result(policy, 1, status, solver_name, results, diagnostics, passes)
+    eta_value = float(pyo.value(model.eta))
+    passes.append(
+        _lex_pass_row(
+            1,
+            "max_eta",
+            status,
+            solver_name,
+            diagnostics,
+            eta=eta_value,
+            total_slack=_a3_total_slack(model, data["D"]),
+            message=_termination_message(results),
+        )
+    )
+    if status != "optimal":
+        return _lex_incomplete_result(policy, 1, status, solver_name, results, diagnostics, passes)
+    eta_star = eta_value
+
+    model.objective.deactivate()
+    model.fix_eta = pyo.Constraint(expr=model.eta >= eta_star - epsilon)
+    model.min_slack_objective = pyo.Objective(
+        expr=sum(model.floor_slack[d] for d in model.D), sense=pyo.minimize
+    )
+    solver_name, results, diagnostics = solve_model(
+        model, time_limit=time_limit, policy=f"{policy} pass=2"
+    )
+    if solver_name is None:
+        result = no_solver_result(policy, diagnostics)
+        passes.append(
+            _lex_pass_row(
+                2, "min_slack", "no_solver", solver_name, diagnostics, message=result["message"]
+            )
+        )
+        result["lexicographic_passes"] = passes
+        return result
+    status = result_status(results)
+    if not has_solution(status):
+        passes.append(
+            _lex_pass_row(
+                2,
+                "min_slack",
+                status,
+                solver_name,
+                diagnostics,
+                message=_termination_message(results),
+            )
+        )
+        return _lex_incomplete_result(policy, 2, status, solver_name, results, diagnostics, passes)
+    slack_star = _a3_total_slack(model, data["D"])
+    passes.append(
+        _lex_pass_row(
+            2,
+            "min_slack",
+            status,
+            solver_name,
+            diagnostics,
+            eta=float(pyo.value(model.eta)),
+            total_slack=slack_star,
+            message=_termination_message(results),
+        )
+    )
+    if status != "optimal":
+        return _lex_incomplete_result(policy, 2, status, solver_name, results, diagnostics, passes)
+
+    model.min_slack_objective.deactivate()
+    model.fix_slack = pyo.Constraint(
+        expr=sum(model.floor_slack[d] for d in model.D) <= slack_star + epsilon
+    )
+    pa = meta["pa"]
+    n_prompts = meta["n_prompts"]
+    model.empirical_objective = pyo.Objective(
+        expr=sum((R[p, a] - alpha_cost * C[p, a]) * model.z[p, a] for p, a in pa) / n_prompts,
+        sense=pyo.maximize,
+    )
+    solver_name, results, diagnostics = solve_model(
+        model, time_limit=time_limit, policy=f"{policy} pass=3"
+    )
+    if solver_name is None:
+        result = no_solver_result(policy, diagnostics)
+        passes.append(
+            _lex_pass_row(
+                3,
+                "max_empirical_quality_minus_cost",
+                "no_solver",
+                solver_name,
+                diagnostics,
+                message=result["message"],
+            )
+        )
+        result["lexicographic_passes"] = passes
+        return result
+    status = result_status(results)
+    if not has_solution(status):
+        passes.append(
+            _lex_pass_row(
+                3,
+                "max_empirical_quality_minus_cost",
+                status,
+                solver_name,
+                diagnostics,
+                message=_termination_message(results),
+            )
+        )
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": _termination_message(results),
+            "diagnostics": diagnostics,
+            "lexicographic_passes": passes,
+        }
+    passes.append(
+        _lex_pass_row(
+            3,
+            "max_empirical_quality_minus_cost",
+            status,
+            solver_name,
+            diagnostics,
+            eta=float(pyo.value(model.eta)),
+            total_slack=_a3_total_slack(model, data["D"]),
+            message=_termination_message(results),
+        )
+    )
+
+    result = _extract_a3_solution(
+        data,
+        cascades,
+        R,
+        C,
+        Esc,
+        A_p,
+        scenarios,
+        model,
+        policy,
+        status,
+        solver_name,
+        diagnostics,
+    )
+    result.update({"K": K, "B": B, "Emax": Emax, "status": status, "lexicographic_passes": passes})
+    return result

@@ -1,0 +1,4 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,K,B,Emax,eta
+A3 K=3 B=0.00126038 Emax=0.75,no_solution,,,,,A3,,,,
+A3 K=3 B=0.00126038 Emax=1,no_solution,,,,,A3,,,,
+A3 K=5 B=0.00126038 Emax=0.75,feasible,2.2370708333333334e-05,0.759375,0.25,GLM-Z1-9B-0414; MiniCPM4.1-8B; deepseek-r1-0528; deepseek-v3-0324; qwen3-235b-a22b-thinking-2507,A3,5.0,0.0012603766156249999,0.75,0.7362499999999996

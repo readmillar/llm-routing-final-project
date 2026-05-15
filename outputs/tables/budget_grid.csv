@@ -1,0 +1,6 @@
+name,value,source
+always_cheapest_cost,0.0,mean prompt min cost
+always_best_quality_cost,0.0016805021541666666,quality oracle tie-break min cost
+B_low,0.00042012553854166664,interpolated
+B_mid,0.0008402510770833333,interpolated
+B_high,0.0012603766156249999,interpolated

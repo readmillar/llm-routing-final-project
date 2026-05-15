@@ -2,7 +2,6 @@ import pandas as pd
 
 from .metrics import assignment_metrics
 
-
 ALPHA_GRID = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 
 

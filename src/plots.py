@@ -6,7 +6,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
 SUCCESS = {"ok", "optimal", "feasible"}
 
 
@@ -49,7 +48,11 @@ def plot_cost_quality_frontier(root):
 def plot_quality_vs_pool_size(root):
     tables = root / "tables"
     frames = []
-    for family, file_name in [("A1", "a1_results.csv"), ("A2", "a2_results.csv"), ("A3", "a3_results.csv")]:
+    for family, file_name in [
+        ("A1", "a1_results.csv"),
+        ("A2", "a2_results.csv"),
+        ("A3", "a3_results.csv"),
+    ]:
         df = _successful(_read_csv(tables / file_name))
         if not df.empty and "K" in df:
             frames.append(df.assign(family=family))
@@ -80,7 +83,11 @@ def plot_selected_model_usage(root):
             preferred = usage
         policy = preferred["policy"].iloc[-1]
         plot_df = preferred[preferred["policy"] == policy].copy()
-        plot_df = plot_df.groupby("model", as_index=False)["usage_count"].sum().nlargest(12, "usage_count")
+        plot_df = (
+            plot_df.groupby("model", as_index=False)["usage_count"]
+            .sum()
+            .nlargest(12, "usage_count")
+        )
         plt.barh(plot_df["model"], plot_df["usage_count"], color="#2f6f73")
         plt.gca().invert_yaxis()
         plt.title(f"Selected model usage: {policy}")
@@ -95,7 +102,9 @@ def plot_domain_performance(root):
     plt.figure(figsize=(9, 5.5))
     if not domain.empty:
         keep = domain[domain["policy"].str.startswith(("Always", "A1", "A2", "A3"))]
-        pivot = keep.pivot_table(index="domain", columns="policy", values="avg_quality", aggfunc="mean")
+        pivot = keep.pivot_table(
+            index="domain", columns="policy", values="avg_quality", aggfunc="mean"
+        )
         pivot.iloc[:, -6:].plot(kind="bar", ax=plt.gca())
     plt.ylabel("Average quality")
     plt.title("Domain quality comparison")
@@ -111,14 +120,24 @@ def plot_robustness_heatmap(root):
     plt.figure(figsize=(8.5, 5.5))
     if not scenario.empty:
         keep = scenario[scenario["policy"].str.startswith(("Always", "A1", "A2", "A3"))]
-        pivot = keep.pivot_table(index="policy", columns="scenario", values="avg_quality", aggfunc="mean")
+        pivot = keep.pivot_table(
+            index="policy", columns="scenario", values="avg_quality", aggfunc="mean"
+        )
         pivot = pivot.tail(8)
         image = plt.imshow(pivot.values, aspect="auto", vmin=0, vmax=1, cmap="viridis")
         plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=30, ha="right")
         plt.yticks(range(len(pivot.index)), pivot.index)
         for i in range(pivot.shape[0]):
             for j in range(pivot.shape[1]):
-                plt.text(j, i, f"{pivot.iloc[i, j]:.2f}", ha="center", va="center", color="white", fontsize=8)
+                plt.text(
+                    j,
+                    i,
+                    f"{pivot.iloc[i, j]:.2f}",
+                    ha="center",
+                    va="center",
+                    color="white",
+                    fontsize=8,
+                )
         plt.colorbar(image, label="Average quality")
     plt.title("Robustness under prompt-mix scenarios")
     plt.tight_layout()

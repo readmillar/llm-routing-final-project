@@ -41,7 +41,7 @@ def validate_data(df):
 def find_missing_pairs(df):
     prompts = sorted(df["prompt_id"].unique())
     models = sorted(df["model"].unique())
-    pairs = set(zip(df["prompt_id"], df["model"]))
+    pairs = set(zip(df["prompt_id"], df["model"], strict=False))
     prompt_domain = df.drop_duplicates("prompt_id").set_index("prompt_id")["domain"].to_dict()
     rows = []
     for prompt in prompts:
@@ -65,18 +65,13 @@ def build_sets_and_matrices(df):
     pair_rows = df[["prompt_id", "model"]].drop_duplicates()
     pm = sorted((row.prompt_id, row.model) for row in pair_rows.itertuples(index=False))
     m_p = {
-        prompt: sorted(df.loc[df["prompt_id"] == prompt, "model"].unique())
-        for prompt in prompts
+        prompt: sorted(df.loc[df["prompt_id"] == prompt, "model"].unique()) for prompt in prompts
     }
     p_d = {
-        domain: sorted(df.loc[df["domain"] == domain, "prompt_id"].unique())
-        for domain in domains
+        domain: sorted(df.loc[df["domain"] == domain, "prompt_id"].unique()) for domain in domains
     }
     prompt_domain = (
-        df[["prompt_id", "domain"]]
-        .drop_duplicates()
-        .set_index("prompt_id")["domain"]
-        .to_dict()
+        df[["prompt_id", "domain"]].drop_duplicates().set_index("prompt_id")["domain"].to_dict()
     )
     q = {(r.prompt_id, r.model): float(r.q_norm) for r in df.itertuples(index=False)}
     c = {(r.prompt_id, r.model): float(r.cost) for r in df.itertuples(index=False)}

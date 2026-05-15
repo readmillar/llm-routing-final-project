@@ -14,7 +14,11 @@ def solve_a1(data, K, B, time_limit=300):
     if K <= 0:
         return {"policy": policy, "status": "infeasible", "message": "K must be positive"}
     if B + 1e-12 < _minimum_assignment_cost(data):
-        return {"policy": policy, "status": "infeasible", "message": "Budget below cheapest assignment"}
+        return {
+            "policy": policy,
+            "status": "infeasible",
+            "message": "Budget below cheapest assignment",
+        }
 
     model = pyo.ConcreteModel()
     model.P = pyo.Set(initialize=data["P"])
@@ -32,10 +36,7 @@ def solve_a1(data, K, B, time_limit=300):
         return mdl.x[prompt, model_name] <= mdl.y[model_name]
 
     def budget_rule(mdl):
-        return (
-            sum(data["c"][(p, m)] * mdl.x[p, m] for p, m in data["PM"]) / n_prompts
-            <= B
-        )
+        return sum(data["c"][(p, m)] * mdl.x[p, m] for p, m in data["PM"]) / n_prompts <= B
 
     model.assignment = pyo.Constraint(model.P, rule=assignment_rule)
     model.link = pyo.Constraint(model.PM, rule=link_rule)
@@ -79,7 +80,9 @@ def solve_a1(data, K, B, time_limit=300):
             "solver": solver_name,
             "K": K,
             "B": B,
-            "selected_models": [m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5],
+            "selected_models": [
+                m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5
+            ],
         }
     )
     return metrics

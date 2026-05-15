@@ -69,15 +69,25 @@ def generate_cascades(data, rho=0.75, max_cascades=250):
     if len(cascades) > max_cascades:
         low_cost_n = max(1, max_cascades // 2)
         high_quality_n = max_cascades - low_cost_n
-        low_cost = cascades.sort_values(["avg_C", "avg_R"], ascending=[True, False]).head(low_cost_n)
+        low_cost = cascades.sort_values(["avg_C", "avg_R"], ascending=[True, False]).head(
+            low_cost_n
+        )
         high_quality = cascades.sort_values(
             ["avg_R", "avg_C", "feasible_prompts"],
             ascending=[False, True, False],
         ).head(high_quality_n)
-        cascades = pd.concat([low_cost, high_quality], ignore_index=True).drop_duplicates(["m1", "m2"])
+        cascades = pd.concat([low_cost, high_quality], ignore_index=True).drop_duplicates(
+            ["m1", "m2"]
+        )
         if len(cascades) < max_cascades:
-            fill = _candidate_cascades(data, rho).sort_values(["avg_C", "avg_R"], ascending=[True, False])
-            cascades = pd.concat([cascades, fill], ignore_index=True).drop_duplicates(["m1", "m2"]).head(max_cascades)
+            fill = _candidate_cascades(data, rho).sort_values(
+                ["avg_C", "avg_R"], ascending=[True, False]
+            )
+            cascades = (
+                pd.concat([cascades, fill], ignore_index=True)
+                .drop_duplicates(["m1", "m2"])
+                .head(max_cascades)
+            )
     cascades = cascades.reset_index(drop=True)
     cascades.insert(0, "cascade_id", [f"c{i:03d}" for i in range(len(cascades))])
 
@@ -94,7 +104,9 @@ def generate_cascades(data, rho=0.75, max_cascades=250):
             r1 = data["r"][(prompt, row.m1)]
             r2 = data["r"][(prompt, row.m2)]
             r_param[(prompt, row.cascade_id)] = r1 + (1 - r1) * rho * r2
-            c_param[(prompt, row.cascade_id)] = data["c"][(prompt, row.m1)] + (1 - r1) * data["c"][(prompt, row.m2)]
+            c_param[(prompt, row.cascade_id)] = (
+                data["c"][(prompt, row.m1)] + (1 - r1) * data["c"][(prompt, row.m2)]
+            )
             esc_param[(prompt, row.cascade_id)] = 1 - r1
     uncovered = [prompt for prompt, values in a_p.items() if not values]
     if uncovered:
@@ -132,15 +144,24 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
     model.link_second = pyo.Constraint(model.PA, rule=link_second_rule)
     model.pool = pyo.Constraint(expr=sum(model.y[m] for m in model.M) <= K)
     model.budget = pyo.Constraint(expr=sum(C[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= B)
-    model.escalation = pyo.Constraint(expr=sum(Esc[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= Emax)
-    model.objective = pyo.Objective(expr=sum(R[p, a] * model.z[p, a] for p, a in pa) / n_prompts, sense=pyo.maximize)
+    model.escalation = pyo.Constraint(
+        expr=sum(Esc[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= Emax
+    )
+    model.objective = pyo.Objective(
+        expr=sum(R[p, a] * model.z[p, a] for p, a in pa) / n_prompts, sense=pyo.maximize
+    )
 
     solver_name, results = solve_model(model, time_limit=time_limit)
     if solver_name is None:
         return no_solver_result(policy)
     status = result_status(results)
     if not has_solution(status):
-        return {"policy": policy, "status": status, "solver": solver_name, "message": str(results.solver.termination_condition)}
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": str(results.solver.termination_condition),
+        }
 
     assignment = {}
     for prompt in data["P"]:
@@ -150,7 +171,12 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
                 assignment[prompt] = cascade_id
                 break
     if set(assignment) != set(data["P"]):
-        return {"policy": policy, "status": status, "solver": solver_name, "message": "Solver stopped before loading a complete incumbent solution"}
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": "Solver stopped before loading a complete incumbent solution",
+        }
     metrics = cascade_assignment_metrics(data, cascades, assignment, R, C, Esc, policy)
     metrics.update(
         {
@@ -159,7 +185,9 @@ def solve_a2(data, cascades, R, C, Esc, A_p, K, B, Emax, time_limit=300):
             "K": K,
             "B": B,
             "Emax": Emax,
-            "selected_models": [m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5],
+            "selected_models": [
+                m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5
+            ],
         }
     )
     return metrics

@@ -2,7 +2,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from .baselines import ALPHA_GRID, run_weighted_baselines, solve_always_best_quality, solve_always_cheapest
+from .baselines import (
+    ALPHA_GRID,
+    run_weighted_baselines,
+    solve_always_best_quality,
+    solve_always_cheapest,
+)
 from .load_data import load_dataset
 from .metrics import domain_quality_rows, records_from_result, scenario_quality, usage_rows
 from .plots import make_all_plots
@@ -34,9 +39,15 @@ def compute_budget_grid(data, output_dir):
     }
     rows = [
         {"name": "always_cheapest_cost", "value": low_end, "source": "mean prompt min cost"},
-        {"name": "always_best_quality_cost", "value": best["avg_cost"], "source": "quality oracle tie-break min cost"},
+        {
+            "name": "always_best_quality_cost",
+            "value": best["avg_cost"],
+            "source": "quality oracle tie-break min cost",
+        },
     ]
-    rows.extend({"name": name, "value": value, "source": "interpolated"} for name, value in budgets.items())
+    rows.extend(
+        {"name": name, "value": value, "source": "interpolated"} for name, value in budgets.items()
+    )
     pd.DataFrame(rows).to_csv(Path(output_dir) / "tables" / "budget_grid.csv", index=False)
     return budgets, cheapest, best
 
@@ -49,7 +60,9 @@ def _best_result(results):
     feasible = [r for r in results if r.get("status") in {"ok", "optimal", "feasible"}]
     if not feasible:
         return results[0] if results else None
-    return sorted(feasible, key=lambda r: (r.get("avg_quality", -1), -r.get("avg_cost", 1e9)), reverse=True)[0]
+    return sorted(
+        feasible, key=lambda r: (r.get("avg_quality", -1), -r.get("avg_cost", 1e9)), reverse=True
+    )[0]
 
 
 def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, output_rows=None):
@@ -74,8 +87,17 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
                     }
                 )
         if "cascade_assignment" in result and R is not None and C is not None:
-            usage.extend(usage_rows(policy, result.get("stage1_usage", {}), len(data["P"]), "stage1"))
-            usage.extend(usage_rows(policy, result.get("expected_stage2_usage", {}), len(data["P"]), "expected_stage2"))
+            usage.extend(
+                usage_rows(policy, result.get("stage1_usage", {}), len(data["P"]), "stage1")
+            )
+            usage.extend(
+                usage_rows(
+                    policy,
+                    result.get("expected_stage2_usage", {}),
+                    len(data["P"]),
+                    "expected_stage2",
+                )
+            )
             for name, scenario in scenarios.items():
                 weights = scenario["prompt_weights"]
                 scenario_rows.append(
@@ -91,7 +113,15 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
     output_rows["scenario"].extend(scenario_rows)
 
 
-def run_experiments(data_path="data/routerbench.csv", output_dir="outputs", skip_a1=False, skip_a2=False, skip_a3=False, time_limit=60, max_cascades=250):
+def run_experiments(
+    data_path="data/routerbench.csv",
+    output_dir="outputs",
+    skip_a1=False,
+    skip_a2=False,
+    skip_a3=False,
+    time_limit=60,
+    max_cascades=250,
+):
     root = ensure_output_dirs(output_dir)
     data = load_dataset(data_path, output_dir=root)
     budgets, cheapest, best = compute_budget_grid(data, root)
@@ -106,15 +136,20 @@ def run_experiments(data_path="data/routerbench.csv", output_dir="outputs", skip
     a0_df.to_csv(root / "tables" / "a0_results.csv", index=False)
     pd.DataFrame(baseline_rows).to_csv(root / "tables" / "baseline_extremes.csv", index=False)
     _record_solution_tables([cheapest, best] + a0_results, data, scenarios, output_rows=table_rows)
-    write_json(root / "solutions" / "baseline_assignments.json", {r["policy"]: r.get("assignment", {}) for r in [cheapest, best] + a0_results})
+    write_json(
+        root / "solutions" / "baseline_assignments.json",
+        {r["policy"]: r.get("assignment", {}) for r in [cheapest, best] + a0_results},
+    )
 
     a1_results = []
     if not skip_a1:
         for K in [1, 2, 3, 5, 8]:
-            for budget_name, B in budgets.items():
+            for _budget_name, B in budgets.items():
                 result = solve_a1(data, K=K, B=B, time_limit=time_limit)
                 a1_results.append(result)
-        pd.DataFrame([_summary_row(r, family="A1", K=r.get("K"), B=r.get("B")) for r in a1_results]).to_csv(root / "tables" / "a1_results.csv", index=False)
+        pd.DataFrame(
+            [_summary_row(r, family="A1", K=r.get("K"), B=r.get("B")) for r in a1_results]
+        ).to_csv(root / "tables" / "a1_results.csv", index=False)
         write_json(root / "solutions" / "a1_solutions.json", {r["policy"]: r for r in a1_results})
         _record_solution_tables(a1_results, data, scenarios, output_rows=table_rows)
 
@@ -129,19 +164,63 @@ def run_experiments(data_path="data/routerbench.csv", output_dir="outputs", skip
         for K in [2, 3, 5]:
             for budget_name, B in budgets.items():
                 for Emax in [1.0, 0.75, 0.50]:
-                    result = solve_a2(data, cascades, params["R"], params["C"], params["Esc"], params["A_p"], K=K, B=B, Emax=Emax, time_limit=time_limit)
+                    result = solve_a2(
+                        data,
+                        cascades,
+                        params["R"],
+                        params["C"],
+                        params["Esc"],
+                        params["A_p"],
+                        K=K,
+                        B=B,
+                        Emax=Emax,
+                        time_limit=time_limit,
+                    )
                     result["budget_name"] = budget_name
                     a2_results.append(result)
-        pd.DataFrame([_summary_row(r, family="A2", K=r.get("K"), B=r.get("B"), Emax=r.get("Emax"), budget_name=r.get("budget_name")) for r in a2_results]).to_csv(root / "tables" / "a2_results.csv", index=False)
+        pd.DataFrame(
+            [
+                _summary_row(
+                    r,
+                    family="A2",
+                    K=r.get("K"),
+                    B=r.get("B"),
+                    Emax=r.get("Emax"),
+                    budget_name=r.get("budget_name"),
+                )
+                for r in a2_results
+            ]
+        ).to_csv(root / "tables" / "a2_results.csv", index=False)
         write_json(root / "solutions" / "a2_solutions.json", {r["policy"]: r for r in a2_results})
-        _record_solution_tables(a2_results, data, scenarios, params["R"], params["C"], output_rows=table_rows)
+        _record_solution_tables(
+            a2_results, data, scenarios, params["R"], params["C"], output_rows=table_rows
+        )
 
     a3_results = []
     if not skip_a3:
         floors = compute_domain_floors(data)
-        attempts = [(3, budgets["B_high"], 0.75), (3, budgets["B_high"], 1.0), (5, budgets["B_high"], 0.75), (5, budgets["B_high"], 1.0)]
+        attempts = [
+            (3, budgets["B_high"], 0.75),
+            (3, budgets["B_high"], 1.0),
+            (5, budgets["B_high"], 0.75),
+            (5, budgets["B_high"], 1.0),
+        ]
         for K, B, Emax in attempts:
-            result = solve_a3(data, cascades, params["R"], params["C"], params["Esc"], params["A_p"], scenarios, floors, K=K, B=B, Emax=Emax, lambda_slack=0.10, time_limit=time_limit)
+            result = solve_a3(
+                data,
+                cascades,
+                params["R"],
+                params["C"],
+                params["Esc"],
+                params["A_p"],
+                scenarios,
+                floors,
+                K=K,
+                B=B,
+                Emax=Emax,
+                lambda_slack=0.10,
+                time_limit=time_limit,
+            )
             a3_results.append(result)
             if result.get("status") in {"optimal", "feasible"}:
                 break
@@ -149,16 +228,31 @@ def run_experiments(data_path="data/routerbench.csv", output_dir="outputs", skip
         slack_rows = []
         scenario_metric_rows = []
         for result in a3_results:
-            a3_rows.append(_summary_row(result, family="A3", K=result.get("K"), B=result.get("B"), Emax=result.get("Emax"), eta=result.get("eta")))
+            a3_rows.append(
+                _summary_row(
+                    result,
+                    family="A3",
+                    K=result.get("K"),
+                    B=result.get("B"),
+                    Emax=result.get("Emax"),
+                    eta=result.get("eta"),
+                )
+            )
             for domain, value in result.get("domain_slacks", {}).items():
                 slack_rows.append({"policy": result["policy"], "domain": domain, "slack": value})
             for scenario, values in result.get("scenario_metrics", {}).items():
-                scenario_metric_rows.append({"policy": result["policy"], "scenario": scenario, **values})
+                scenario_metric_rows.append(
+                    {"policy": result["policy"], "scenario": scenario, **values}
+                )
         pd.DataFrame(a3_rows).to_csv(root / "tables" / "a3_results.csv", index=False)
         pd.DataFrame(slack_rows).to_csv(root / "tables" / "a3_domain_slacks.csv", index=False)
-        pd.DataFrame(scenario_metric_rows).to_csv(root / "tables" / "a3_scenario_metrics.csv", index=False)
+        pd.DataFrame(scenario_metric_rows).to_csv(
+            root / "tables" / "a3_scenario_metrics.csv", index=False
+        )
         write_json(root / "solutions" / "a3_solutions.json", {r["policy"]: r for r in a3_results})
-        _record_solution_tables(a3_results, data, scenarios, params["R"], params["C"], output_rows=table_rows)
+        _record_solution_tables(
+            a3_results, data, scenarios, params["R"], params["C"], output_rows=table_rows
+        )
 
     representative = [
         cheapest,
@@ -168,11 +262,17 @@ def run_experiments(data_path="data/routerbench.csv", output_dir="outputs", skip
         _best_result(a2_results),
         _best_result(a3_results),
     ]
-    summary = [_summary_row(r, family=r["policy"].split()[0]) for r in representative if r is not None]
+    summary = [
+        _summary_row(r, family=r["policy"].split()[0]) for r in representative if r is not None
+    ]
     pd.DataFrame(summary).to_csv(root / "tables" / "summary_comparison.csv", index=False)
     pd.DataFrame(table_rows["domain"]).to_csv(root / "tables" / "domain_quality.csv", index=False)
-    pd.DataFrame(table_rows["usage"]).to_csv(root / "tables" / "selected_model_usage.csv", index=False)
-    pd.DataFrame(table_rows["scenario"]).to_csv(root / "tables" / "scenario_quality.csv", index=False)
+    pd.DataFrame(table_rows["usage"]).to_csv(
+        root / "tables" / "selected_model_usage.csv", index=False
+    )
+    pd.DataFrame(table_rows["scenario"]).to_csv(
+        root / "tables" / "scenario_quality.csv", index=False
+    )
 
     make_all_plots(root)
     return {

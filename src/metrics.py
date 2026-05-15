@@ -1,7 +1,5 @@
 from collections import Counter
 
-import pandas as pd
-
 
 def assignment_metrics(data, assignment, policy):
     """Summarize a single-shot prompt-to-model assignment."""

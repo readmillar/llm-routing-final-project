@@ -5,15 +5,29 @@ from src.plots import make_all_plots
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run the INDENG 164 LLM routing optimization pipeline.")
-    parser.add_argument("--data", default="data/routerbench.csv", help="Path to locked routerbench CSV.")
-    parser.add_argument("--output-dir", default="outputs", help="Directory for generated tables, figures, and solutions.")
+    parser = argparse.ArgumentParser(
+        description="Run the INDENG 164 LLM routing optimization pipeline."
+    )
+    parser.add_argument(
+        "--data", default="data/routerbench.csv", help="Path to locked routerbench CSV."
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="outputs",
+        help="Directory for generated tables, figures, and solutions.",
+    )
     parser.add_argument("--skip-a1", action="store_true", help="Skip A1 single-shot MILP grid.")
     parser.add_argument("--skip-a2", action="store_true", help="Skip A2 cascade MILP grid.")
     parser.add_argument("--skip-a3", action="store_true", help="Skip A3 robust cascade MILP.")
-    parser.add_argument("--only-plots", action="store_true", help="Regenerate figures from existing output CSVs.")
-    parser.add_argument("--time-limit", type=float, default=60.0, help="Per-solve solver time limit in seconds.")
-    parser.add_argument("--max-cascades", type=int, default=250, help="Maximum global cascade candidates.")
+    parser.add_argument(
+        "--only-plots", action="store_true", help="Regenerate figures from existing output CSVs."
+    )
+    parser.add_argument(
+        "--time-limit", type=float, default=60.0, help="Per-solve solver time limit in seconds."
+    )
+    parser.add_argument(
+        "--max-cascades", type=int, default=250, help="Maximum global cascade candidates."
+    )
     return parser.parse_args()
 
 

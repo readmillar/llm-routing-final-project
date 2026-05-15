@@ -3,7 +3,6 @@ from pathlib import Path
 
 import pyomo.environ as pyo
 
-
 SOLVER_ORDER = ["appsi_highs", "highs", "cbc", "glpk"]
 
 

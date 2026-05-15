@@ -1,0 +1,27 @@
+random_seed: 164
+time_limit: 600
+max_cascades: 500
+a1:
+  K: [1, 2, 3, 5, 8]
+a2:
+  K: [2, 3, 5, 8]
+  Emax: [0.5, 0.75, 1.0]
+a3:
+  K: [3, 5, 8]
+  budget_names: ["B_low", "B_mid", "B_high"]
+  Emax: [0.5, 0.75, 1.0]
+  floor_multiplier: [0.75, 0.8, 0.85, 0.9]
+  lambda_slack: [0.01, 0.05, 0.1, 0.25, 0.5]
+  rho: [0.5, 0.75, 1.0]
+stress:
+  l1_radius: 0.4
+  dirichlet_samples: 500
+  concentration: 40.0
+matched_report:
+  K: 5
+  budget_name: "B_mid"
+  Emax: 0.75
+production_constraints:
+  storage_cap_gb: null
+  provider_pool_caps: {}
+  provider_traffic_caps: {}

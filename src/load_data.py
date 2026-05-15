@@ -2,8 +2,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from .preprocessing import build_sets_and_matrices, normalize_quality, validate_data, write_data_summaries
-
+from .preprocessing import (
+    build_sets_and_matrices,
+    normalize_quality,
+    validate_data,
+    write_data_summaries,
+)
 
 COLUMN_CANDIDATES = {
     "prompt_id": ["prompt_id", "prompt", "question_id", "qid", "id"],
@@ -34,8 +38,7 @@ def detect_columns(df):
     missing = sorted(set(COLUMN_CANDIDATES) - set(detected))
     if missing:
         raise ValueError(
-            "Could not detect required columns "
-            f"{missing}. Available columns: {list(df.columns)}"
+            "Could not detect required columns " f"{missing}. Available columns: {list(df.columns)}"
         )
     return detected
 
@@ -51,7 +54,9 @@ def standardize_long_format(df, columns):
             "cost": pd.to_numeric(df[columns["cost"]], errors="raise"),
         }
     )
-    optional = [c for c in ["row_id", "index", "prompt_tokens", "completion_tokens"] if c in df.columns]
+    optional = [
+        c for c in ["row_id", "index", "prompt_tokens", "completion_tokens"] if c in df.columns
+    ]
     for column in optional:
         out[column] = df[column]
     return out

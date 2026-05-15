@@ -1,7 +1,6 @@
 import pyomo.environ as pyo
 
-from .metrics import scenario_quality, scenario_weights
-from .metrics import cascade_assignment_metrics
+from .metrics import cascade_assignment_metrics, scenario_quality, scenario_weights
 from .solver_utils import has_solution, no_solver_result, result_status, solve_model
 
 
@@ -42,7 +41,9 @@ def compute_domain_floors(data, multiplier=0.90):
     return floors
 
 
-def solve_a3(data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lambda_slack=0.10, time_limit=300):
+def solve_a3(
+    data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lambda_slack=0.10, time_limit=300
+):
     """Solve A3 robust reliability-aware cascade MILP."""
     policy = f"A3 K={K} B={B:.6g} Emax={Emax:g}"
     if K < 2:
@@ -92,18 +93,28 @@ def solve_a3(data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lamb
     model.link_first = pyo.Constraint(model.PA, rule=link_first_rule)
     model.link_second = pyo.Constraint(model.PA, rule=link_second_rule)
     model.pool = pyo.Constraint(expr=sum(model.y[m] for m in model.M) <= K)
-    model.escalation = pyo.Constraint(expr=sum(Esc[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= Emax)
+    model.escalation = pyo.Constraint(
+        expr=sum(Esc[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= Emax
+    )
     model.scenario_quality = pyo.Constraint(model.S, rule=scenario_quality_rule)
     model.scenario_cost = pyo.Constraint(model.S, rule=scenario_cost_rule)
     model.domain_floor = pyo.Constraint(model.D, rule=domain_floor_rule)
-    model.objective = pyo.Objective(expr=model.eta - lambda_slack * sum(model.floor_slack[d] for d in model.D), sense=pyo.maximize)
+    model.objective = pyo.Objective(
+        expr=model.eta - lambda_slack * sum(model.floor_slack[d] for d in model.D),
+        sense=pyo.maximize,
+    )
 
     solver_name, results = solve_model(model, time_limit=time_limit)
     if solver_name is None:
         return no_solver_result(policy)
     status = result_status(results)
     if not has_solution(status):
-        return {"policy": policy, "status": status, "solver": solver_name, "message": str(results.solver.termination_condition)}
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": str(results.solver.termination_condition),
+        }
 
     assignment = {}
     for prompt in data["P"]:
@@ -113,7 +124,12 @@ def solve_a3(data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lamb
                 assignment[prompt] = cascade_id
                 break
     if set(assignment) != set(data["P"]):
-        return {"policy": policy, "status": status, "solver": solver_name, "message": "Solver stopped before loading a complete incumbent solution"}
+        return {
+            "policy": policy,
+            "status": status,
+            "solver": solver_name,
+            "message": "Solver stopped before loading a complete incumbent solution",
+        }
     base = cascade_assignment_metrics(data, cascades, assignment, R, C, Esc, policy)
     scenario_metrics = {}
     for name, scenario in scenarios.items():
@@ -131,10 +147,14 @@ def solve_a3(data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lamb
             "B": B,
             "Emax": Emax,
             "eta": float(pyo.value(model.eta, exception=False) or 0.0),
-            "selected_models": [m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5],
+            "selected_models": [
+                m for m in data["M"] if (pyo.value(model.y[m], exception=False) or 0.0) > 0.5
+            ],
             "cascade_assignment": assignment,
             "scenario_metrics": scenario_metrics,
-            "domain_slacks": {d: float(pyo.value(model.floor_slack[d], exception=False) or 0.0) for d in data["D"]},
+            "domain_slacks": {
+                d: float(pyo.value(model.floor_slack[d], exception=False) or 0.0) for d in data["D"]
+            },
             "lambda_slack": lambda_slack,
         }
     )

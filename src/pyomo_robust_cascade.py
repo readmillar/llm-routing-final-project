@@ -83,7 +83,10 @@ def solve_a3(
         return mdl.z[prompt, cascade_id] <= mdl.y[cascade_lookup[cascade_id]["m1"]]
 
     def link_second_rule(mdl, prompt, cascade_id):
-        return mdl.z[prompt, cascade_id] <= mdl.y[cascade_lookup[cascade_id]["m2"]]
+        m2 = cascade_lookup[cascade_id]["m2"]
+        if not isinstance(m2, str) or not m2:
+            return pyo.Constraint.Skip
+        return mdl.z[prompt, cascade_id] <= mdl.y[m2]
 
     def scenario_quality_rule(mdl, scenario):
         weights = scenarios[scenario]["prompt_weights"]

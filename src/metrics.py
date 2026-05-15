@@ -37,10 +37,14 @@ def cascade_assignment_metrics(data, cascades, assignment, r_param, c_param, esc
         domain_cost[domain] = sum(c_param[(p, assignment[p])] for p in prompts) / len(prompts)
     usage = Counter()
     expected_second = Counter()
+    expected_third = Counter()
     for prompt, cascade_id in assignment.items():
         row = cascade_lookup.loc[cascade_id]
         usage[row["m1"]] += 1.0
-        expected_second[row["m2"]] += esc_param[(prompt, cascade_id)]
+        if isinstance(row.get("m2", ""), str) and row["m2"]:
+            expected_second[row["m2"]] += esc_param[(prompt, cascade_id)]
+        if isinstance(row.get("m3", ""), str) and row["m3"]:
+            expected_third[row["m3"]] += esc_param[(prompt, cascade_id)]
     return {
         "policy": policy,
         "cascade_assignment": dict(assignment),
@@ -51,6 +55,7 @@ def cascade_assignment_metrics(data, cascades, assignment, r_param, c_param, esc
         "domain_cost": domain_cost,
         "stage1_usage": dict(usage),
         "expected_stage2_usage": dict(expected_second),
+        "expected_stage3_usage": dict(expected_third),
     }
 
 

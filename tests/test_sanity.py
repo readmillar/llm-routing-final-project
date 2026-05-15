@@ -129,7 +129,8 @@ def test_a2_solution_uses_only_selected_models(synthetic_data):
     for cascade_id in result["cascade_assignment"].values():
         row = cascade_lookup.loc[cascade_id]
         assert row["m1"] in selected
-        assert row["m2"] in selected
+        if row["m2"]:
+            assert row["m2"] in selected
 
 
 def test_a3_returns_robust_metrics(synthetic_data):

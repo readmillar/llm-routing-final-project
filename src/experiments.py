@@ -12,6 +12,7 @@ from .baselines import (
 from .complementarity import estimate_pair_recovery, recovery_lookup_from_frame
 from .load_data import load_dataset
 from .metrics import domain_quality_rows, records_from_result, scenario_quality, usage_rows
+from .model_metadata import load_or_create_metadata, summarize_provider_pool
 from .plots import make_all_plots
 from .pyomo_cascade import generate_cascades, solve_a2
 from .pyomo_robust_cascade import build_scenarios, compute_domain_floors, solve_a3
@@ -172,6 +173,28 @@ def _best_result(results):
     )[0]
 
 
+def _nonempty_models(models):
+    """Return sorted non-empty model names."""
+    return sorted({model for model in models if isinstance(model, str) and model})
+
+
+def _models_for_provider_summary(result):
+    """Prefer actually assigned or used models over loose selected pool variables."""
+    if result.get("assignment"):
+        return _nonempty_models(result["assignment"].values())
+    if result.get("cascade_assignment"):
+        models = []
+        for key in ["stage1_usage", "expected_stage2_usage", "expected_stage3_usage"]:
+            models.extend(
+                model
+                for model, count in (result.get(key) or {}).items()
+                if float(count or 0.0) > 0.0
+            )
+        if models:
+            return _nonempty_models(models)
+    return _nonempty_models(result.get("selected_models", result.get("models_used", [])))
+
+
 def _has_assignment_result(result, key):
     """Return True when a solver result contains a complete assignment payload."""
     return (
@@ -249,6 +272,8 @@ def run_experiments(
 ):
     root = ensure_output_dirs(output_dir)
     data = load_dataset(data_path, output_dir=root)
+    metadata = load_or_create_metadata(data["M"], path="data/model_metadata.csv")
+    metadata.to_csv(root / "tables" / "model_metadata.csv", index=False)
     recovery_df = estimate_pair_recovery(data, min_support=5, global_rho=0.75)
     recovery_df.to_csv(root / "tables" / "model_pair_recovery.csv", index=False)
     recovery_lookup = recovery_lookup_from_frame(recovery_df)
@@ -543,6 +568,16 @@ def run_experiments(
         _best_result(a2_results),
         select_report_a3_policy(a3_results),
     ]
+    provider_rows = []
+    for result in representative:
+        if result is None:
+            continue
+        selected = _models_for_provider_summary(result)
+        row = {"policy": result["policy"], **summarize_provider_pool(selected, metadata)}
+        provider_rows.append(row)
+    provider_df = pd.DataFrame(provider_rows)
+    provider_df.to_csv(root / "tables" / "provider_usage.csv", index=False)
+    provider_df[["policy", "storage_gb"]].to_csv(root / "tables" / "storage_usage.csv", index=False)
     stress_scenarios = sample_dirichlet_scenarios(data, n=500, concentration=40.0, seed=164)
     stress_rows = []
     stress_cascade_cache = {}

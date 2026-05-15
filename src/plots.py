@@ -205,6 +205,21 @@ def plot_stress_test_quality_distribution(root):
     plt.close()
 
 
+def plot_provider_traffic_share(root):
+    provider = _read_csv(root / "tables" / "provider_usage.csv")
+    plt.figure(figsize=(8, 5))
+    if not provider.empty and "provider_count" in provider:
+        provider.tail(8).plot(
+            kind="bar", x="policy", y="provider_count", ax=plt.gca(), legend=False
+        )
+        plt.ylabel("Provider families selected")
+        plt.xticks(rotation=30, ha="right")
+    plt.title("Provider diversity by selected policy")
+    plt.tight_layout()
+    plt.savefig(root / "figures" / "provider_traffic_share.png", dpi=220)
+    plt.close()
+
+
 def make_all_plots(output_dir):
     root = Path(output_dir)
     (root / "figures").mkdir(parents=True, exist_ok=True)
@@ -215,3 +230,4 @@ def make_all_plots(output_dir):
     plot_robustness_heatmap(root)
     plot_model_complementarity_heatmap(root)
     plot_stress_test_quality_distribution(root)
+    plot_provider_traffic_share(root)

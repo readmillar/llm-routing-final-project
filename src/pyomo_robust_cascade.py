@@ -1,6 +1,7 @@
 import pyomo.environ as pyo
 
 from .metrics import cascade_assignment_metrics, scenario_quality, scenario_weights
+from .model_metadata import validate_metadata_covers_models
 from .solver_utils import (
     has_solution,
     no_solver_result,
@@ -50,7 +51,23 @@ def compute_domain_floors(data, multiplier=0.90):
 
 
 def solve_a3(
-    data, cascades, R, C, Esc, A_p, scenarios, floors, K, B, Emax, lambda_slack=0.10, time_limit=300
+    data,
+    cascades,
+    R,
+    C,
+    Esc,
+    A_p,
+    scenarios,
+    floors,
+    K,
+    B,
+    Emax,
+    lambda_slack=0.10,
+    time_limit=300,
+    metadata=None,
+    storage_cap_gb=None,
+    provider_pool_caps=None,
+    provider_traffic_caps=None,
 ):
     """Solve A3 robust reliability-aware cascade MILP."""
     policy = f"A3 K={K} B={B:.6g} Emax={Emax:g}"
@@ -62,6 +79,8 @@ def solve_a3(
             "message": message,
             "diagnostics": pre_solve_diagnostics(policy, "infeasible", message),
         }
+    if metadata is not None:
+        validate_metadata_covers_models(metadata, data["M"])
 
     cascade_lookup = cascades.set_index("cascade_id")[["m1", "m2"]].to_dict("index")
     pa = sorted((p, a) for p in data["P"] for a in A_p[p])
@@ -110,6 +129,44 @@ def solve_a3(
     model.link_first = pyo.Constraint(model.PA, rule=link_first_rule)
     model.link_second = pyo.Constraint(model.PA, rule=link_second_rule)
     model.pool = pyo.Constraint(expr=sum(model.y[m] for m in model.M) <= K)
+    if metadata is not None and storage_cap_gb is not None:
+        storage = metadata.set_index("model")["estimated_storage_gb"].to_dict()
+        model.storage = pyo.Constraint(
+            expr=sum(float(storage[m]) * model.y[m] for m in model.M) <= float(storage_cap_gb)
+        )
+    if metadata is not None and provider_pool_caps:
+        provider = metadata.set_index("model")["provider_family"].to_dict()
+        model.G = pyo.Set(initialize=sorted(provider_pool_caps))
+
+        def provider_pool_rule(mdl, group):
+            models = [m for m in data["M"] if provider[m] == group]
+            if not models:
+                return pyo.Constraint.Feasible
+            return sum(mdl.y[m] for m in models) <= int(provider_pool_caps[group])
+
+        model.provider_pool = pyo.Constraint(model.G, rule=provider_pool_rule)
+    if metadata is not None and provider_traffic_caps:
+        provider = metadata.set_index("model")["provider_family"].to_dict()
+        model.TG = pyo.Set(initialize=sorted(provider_traffic_caps))
+
+        def provider_traffic_rule(mdl, scenario, group):
+            weights = scenarios[scenario]["prompt_weights"]
+            terms = []
+            for p, a in pa:
+                row = cascade_lookup[a]
+                if provider[row["m1"]] == group:
+                    terms.append(weights[p] * mdl.z[p, a])
+                if (
+                    isinstance(row.get("m2", ""), str)
+                    and row["m2"]
+                    and provider[row["m2"]] == group
+                ):
+                    terms.append(weights[p] * Esc[p, a] * mdl.z[p, a])
+            if not terms:
+                return pyo.Constraint.Feasible
+            return sum(terms) <= float(provider_traffic_caps[group])
+
+        model.provider_traffic = pyo.Constraint(model.S, model.TG, rule=provider_traffic_rule)
     model.escalation = pyo.Constraint(
         expr=sum(Esc[p, a] * model.z[p, a] for p, a in pa) / n_prompts <= Emax
     )

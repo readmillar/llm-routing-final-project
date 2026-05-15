@@ -1,6 +1,10 @@
+import hashlib
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from .audit import audit_cascade_result, audit_single_shot_result
 from .baselines import (
@@ -30,7 +34,7 @@ from .pyomo_robust_cascade import (
 )
 from .pyomo_single_shot import solve_a1
 from .pyomo_tail_risk import solve_a4_cvar_cascade
-from .report_artifacts import write_report_numbers, write_report_tables
+from .report_artifacts import write_manifest, write_report_numbers, write_report_tables
 from .solver_utils import write_json
 from .stress_testing import evaluate_policy_under_scenarios, sample_dirichlet_scenarios
 
@@ -80,6 +84,60 @@ A4_RESULT_COLUMNS = [
     "lambda_cvar",
     "cvar_shortfall",
 ]
+
+DIAGNOSTIC_METADATA_COLUMNS = [
+    "family",
+    "policy",
+    "status",
+    "grid_id",
+    "K",
+    "B",
+    "Emax",
+    "budget_name",
+    "rho",
+    "floor_multiplier",
+    "lambda_slack",
+    "beta",
+    "lambda_cvar",
+]
+
+DIAGNOSTIC_SOLVER_COLUMNS = [
+    "solver",
+    "solver_status",
+    "termination_condition",
+    "message",
+    "wall_time_sec",
+    "best_bound",
+    "objective_value",
+    "mip_gap",
+    "num_variables",
+    "num_binary_variables",
+    "num_constraints",
+]
+
+DIAGNOSTIC_COLUMNS = DIAGNOSTIC_METADATA_COLUMNS + DIAGNOSTIC_SOLVER_COLUMNS
+
+
+def load_config(config_path):
+    if not config_path:
+        return {}
+    with Path(config_path).open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def current_git_commit():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
 
 
 def ensure_output_dirs(output_dir):
@@ -279,6 +337,25 @@ def _has_assignment_result(result, key):
     )
 
 
+def collect_solver_diagnostics(result_groups):
+    """Collect per-solve diagnostics rows with stable experiment metadata."""
+    rows = []
+    for family, results in result_groups:
+        for result in results:
+            if not isinstance(result, dict) or not isinstance(result.get("diagnostics"), dict):
+                continue
+            diagnostics = result["diagnostics"]
+            row = {column: result.get(column) for column in DIAGNOSTIC_METADATA_COLUMNS}
+            row["family"] = family
+            row["policy"] = result.get("policy") or diagnostics.get("policy")
+            row["status"] = result.get("status") or diagnostics.get("status")
+            for key, value in diagnostics.items():
+                if key not in {"policy", "status"}:
+                    row[key] = value
+            rows.append(row)
+    return rows
+
+
 def should_run_a4(skip_a3=False):
     """Return whether the matched A4 CVaR policy should run for this experiment."""
     del skip_a3
@@ -364,6 +441,7 @@ def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, out
 def run_experiments(
     data_path="data/routerbench.csv",
     output_dir="outputs",
+    config_path=None,
     skip_a1=False,
     skip_a2=False,
     skip_a3=False,
@@ -371,6 +449,7 @@ def run_experiments(
     max_cascades=250,
 ):
     root = ensure_output_dirs(output_dir)
+    config = load_config(config_path)
     data = load_dataset(data_path, output_dir=root)
     metadata = load_or_create_metadata(data["M"], path="data/model_metadata.csv")
     metadata.to_csv(root / "tables" / "model_metadata.csv", index=False)
@@ -911,8 +990,44 @@ def run_experiments(
         root / "tables" / "scenario_quality.csv", index=False
     )
     pd.DataFrame(audit_rows).to_csv(root / "tables" / "solution_audit.csv", index=False)
+    diagnostics_rows = collect_solver_diagnostics(
+        [
+            ("A1", a1_results),
+            ("A2", a2_results),
+            ("A3", a3_results),
+            ("A4", a4_results),
+        ]
+    )
+    diagnostics_extra_columns = sorted(
+        {column for row in diagnostics_rows for column in row if column not in DIAGNOSTIC_COLUMNS}
+    )
+    pd.DataFrame(diagnostics_rows, columns=DIAGNOSTIC_COLUMNS + diagnostics_extra_columns).to_csv(
+        root / "tables" / "solver_diagnostics.csv", index=False
+    )
 
     make_all_plots(root)
+    write_manifest(
+        root,
+        data_sha256=file_sha256(data_path),
+        command=" ".join(sys.argv),
+        random_seed=int(config.get("random_seed", 164)),
+        git_commit=current_git_commit(),
+    )
+    (root / "RUN_LOG.md").write_text(
+        "\n".join(
+            [
+                "# Run Log",
+                "",
+                f"Data: `{data_path}`",
+                f"Output directory: `{root}`",
+                f"A1 grid points: {len(a1_results)}",
+                f"A2 grid points: {len(a2_results)}",
+                f"A3 grid points: {len(a3_results)}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     return {
         "output_dir": str(root),
         "budgets": budgets,

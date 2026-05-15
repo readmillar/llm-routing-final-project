@@ -16,6 +16,9 @@ def parse_args():
         default="outputs",
         help="Directory for generated tables, figures, and solutions.",
     )
+    parser.add_argument(
+        "--config", default=None, help="YAML config file for final experiment settings."
+    )
     parser.add_argument("--skip-a1", action="store_true", help="Skip A1 single-shot MILP grid.")
     parser.add_argument("--skip-a2", action="store_true", help="Skip A2 cascade MILP grid.")
     parser.add_argument("--skip-a3", action="store_true", help="Skip A3 robust cascade MILP.")
@@ -40,6 +43,7 @@ def main():
     result = run_experiments(
         data_path=args.data,
         output_dir=args.output_dir,
+        config_path=args.config,
         skip_a1=args.skip_a1,
         skip_a2=args.skip_a2,
         skip_a3=args.skip_a3,

@@ -1,0 +1,2 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,K,B,Emax,budget_name,worst_domain_quality
+A2 K=5 B=0.000840251 Emax=0.75,feasible,0.0008274897458333333,0.925,0.0,Intern-S1-mini; Llama-3.1-8B-Instruct; MiniCPM4.1-8B; NVIDIA-Nemotron-Nano-9B-v2; qwen3-235b-a22b-2507,A2,5,0.0008402510770833333,0.75,B_mid,0.9

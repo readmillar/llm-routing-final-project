@@ -1,0 +1,2 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,grid_id,K,B,Emax,budget_name,eta,total_slack,floor_multiplier,lambda_slack,rho,worst_domain_quality,worst_scenario_quality
+A3 K=2 B=0.000840251 Emax=1,feasible,0.0007575595833333333,0.6458333333333334,0.0,GLM-Z1-9B-0414; gemini-2.5-flash,A3,K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,2,0.0008402510770833333,1.0,B_mid,0.0,2.95,0.75,0.1,0.75,0.6166666666666667,0.6333333333333334

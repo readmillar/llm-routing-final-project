@@ -1,0 +1,7 @@
+policy,storage_gb
+Always cheapest,160.0
+Always best quality,512.0
+A0 alpha=0.5,496.0
+A1 K=5 B=0.000840251,144.0
+A2 K=5 B=0.000840251 Emax=0.75,128.0
+A3 K=5 B=0.000840251 Emax=0.75,144.0

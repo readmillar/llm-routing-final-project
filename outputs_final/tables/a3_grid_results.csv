@@ -1,0 +1,2 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,grid_id,K,B,Emax,budget_name,eta,total_slack,floor_multiplier,lambda_slack,rho,worst_domain_quality,worst_scenario_quality
+A3 K=5 B=0.000840251 Emax=0.75,feasible,0.0007812571291666668,0.9291666666666667,0.0,Intern-S1-mini; MiniCPM4.1-8B; NVIDIA-Nemotron-Nano-9B-v2; deepseek-r1-0528; qwen3-235b-a22b-2507,A3,K=5|budget=B_mid|Emax=0.75|floor=0.85|lambda=0.1|rho=0.75,5,0.0008402510770833333,0.75,B_mid,0.9174999999999973,0.0,0.85,0.1,0.75,0.9,0.9175

@@ -1,0 +1,10 @@
+grid_id,policy,scenario,avg_quality,avg_cost
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,empirical,0.6458333333333334,0.0007575595833333333
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,balanced,0.6458333333333334,0.0007575595833333333
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,coding_heavy,0.6675,0.0005953155000000001
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,math_heavy,0.6375000000000001,0.0008283285
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,knowledge_heavy,0.6333333333333334,0.0008348363333333334
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,l1_shift_to_AIME,0.6491666666666667,0.0007294255833333334
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,l1_shift_to_GPQA,0.6425,0.0007856935833333333
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,l1_shift_to_LCB,0.6591666666666667,0.00065399825
+K=2|budget=B_mid|Emax=1|floor=0.75|lambda=0.1|rho=0.75,A3 K=2 B=0.000840251 Emax=1,l1_shift_to_MMLU-Pro,0.6458333333333334,0.0007288999166666667

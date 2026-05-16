@@ -1,0 +1,13 @@
+metric,value
+rows,7860.0
+unique_prompts,240.0
+unique_models,33.0
+unique_domains,4.0
+available_pairs,7860.0
+missing_pairs,60.0
+quality_min,0.0
+quality_max,1.0
+cost_min,0.0
+cost_max,0.480387
+zero_cost_rows,2177.0
+zero_cost_models,16.0

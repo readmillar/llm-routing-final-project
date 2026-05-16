@@ -1,0 +1,9 @@
+{
+  "command": "run_experiments.py --data data/routerbench.csv --output-dir outputs_smoke.tmp --config config/smoke.yaml",
+  "created_at": "2026-05-16T01:24:33.329614+00:00",
+  "data_sha256": "3570b70f9802225ba93485f48d4d84a04c77361b4aa7bbc56655448303f0bf05",
+  "git_commit": "c387f23d093d66a451e553141e5b4447e8da579e",
+  "pyomo_version": "6.10.0",
+  "python_version": "3.13.7",
+  "random_seed": 164
+}

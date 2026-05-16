@@ -1,0 +1,2 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,K,B,Emax,budget_name,worst_domain_quality
+A2 K=2 B=0.000840251 Emax=1,feasible,0.0,0.23333333333333334,0.0,granite-3.3-8b-instruct; internlm3-8b-instruct,A2,2,0.0008402510770833333,1.0,B_mid,0.06666666666666667

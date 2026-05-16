@@ -1,0 +1,2 @@
+policy,status,avg_cost,avg_quality,escalation_rate,selected_models,family,K,B,budget_name,worst_domain_quality
+A1 K=1 B=0.000840251,optimal,0.0,0.6166666666666667,,MiniCPM4.1-8B,A1,1,0.0008402510770833333,B_mid,0.5333333333333333

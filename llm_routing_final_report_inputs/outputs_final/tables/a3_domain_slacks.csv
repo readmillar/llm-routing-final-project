@@ -1,0 +1,5 @@
+grid_id,policy,domain,slack
+K=5|budget=B_mid|Emax=0.75|floor=0.85|lambda=0.1|rho=0.75,A3 K=5 B=0.000840251 Emax=0.75,AIME,0.0
+K=5|budget=B_mid|Emax=0.75|floor=0.85|lambda=0.1|rho=0.75,A3 K=5 B=0.000840251 Emax=0.75,GPQA,0.0
+K=5|budget=B_mid|Emax=0.75|floor=0.85|lambda=0.1|rho=0.75,A3 K=5 B=0.000840251 Emax=0.75,LCB,0.0
+K=5|budget=B_mid|Emax=0.75|floor=0.85|lambda=0.1|rho=0.75,A3 K=5 B=0.000840251 Emax=0.75,MMLU-Pro,0.0

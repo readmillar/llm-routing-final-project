@@ -1,0 +1,48 @@
+random_seed: 164
+profile: smoke
+
+time_limit: 20
+max_cascades: 40
+base_rho: 0.75
+
+features:
+  empirical_recovery: false
+  stress_tests: false
+  a4_cvar: false
+  three_stage: false
+  lexicographic_a3: false
+  provider_storage_constraints: false
+
+a1:
+  K: [1]
+  budget_names: ["B_mid"]
+
+a2:
+  K: [2]
+  budget_names: ["B_mid"]
+  Emax: [1.0]
+
+a3:
+  K: [2]
+  budget_names: ["B_mid"]
+  Emax: [1.0]
+  floor_multiplier: [0.75]
+  lambda_slack: [0.1]
+  rho: [0.75]
+
+matched_report:
+  K: 2
+  budget_name: "B_mid"
+  Emax: 1.0
+  floor_multiplier: 0.75
+  lambda_slack: 0.1
+  rho: 0.75
+
+stress:
+  dirichlet_samples: 0
+  concentration: 40.0
+
+production_constraints:
+  storage_cap_gb: null
+  provider_pool_caps: {}
+  provider_traffic_caps: {}

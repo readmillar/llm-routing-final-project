@@ -47,6 +47,27 @@ STATUS_RANK = {
 
 SUCCESS_STATUSES = {"ok", "optimal", "feasible", "feasible_time_limited"}
 
+DEFAULT_FEATURES = {
+    "empirical_recovery": False,
+    "stress_tests": False,
+    "a4_cvar": False,
+    "three_stage": False,
+    "lexicographic_a3": False,
+    "provider_storage_constraints": False,
+}
+
+RECOVERY_COLUMNS = ["m1", "m2", "domain", "support", "recovery_rate", "fallback_level"]
+
+STRESS_RESULT_COLUMNS = [
+    "policy",
+    "scenario",
+    "avg_quality",
+    "avg_cost",
+    "grid_id",
+    "policy_label",
+    "rho",
+]
+
 REPORT_COMPARISON_COLUMNS = [
     "policy",
     "family",
@@ -58,6 +79,7 @@ REPORT_COMPARISON_COLUMNS = [
     "worst_scenario_quality",
     "p05_stress_quality",
     "worst_domain_quality",
+    "eta",
     "total_slack",
     "escalation_rate",
     "num_models_selected",
@@ -71,15 +93,13 @@ REPORT_COMPARISON_COLUMNS = [
 A4_RESULT_COLUMNS = [
     "policy",
     "status",
-    "avg_cost",
+    "objective",
     "avg_quality",
-    "escalation_rate",
-    "selected_models",
-    "family",
+    "avg_cost",
     "K",
     "B",
-    "Emax",
     "budget_name",
+    "Emax",
     "beta",
     "lambda_cvar",
     "cvar_shortfall",
@@ -117,12 +137,92 @@ DIAGNOSTIC_SOLVER_COLUMNS = [
 
 DIAGNOSTIC_COLUMNS = DIAGNOSTIC_METADATA_COLUMNS + DIAGNOSTIC_SOLVER_COLUMNS
 
+TABLE_ALIASES = {
+    "a1_results.csv": ["a1_grid_results.csv"],
+    "a2_results.csv": ["a2_grid_results.csv"],
+}
+
 
 def load_config(config_path):
     if not config_path:
         return {}
     with Path(config_path).open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle) or {}
+
+
+def write_table_with_aliases(frame: pd.DataFrame, path: Path) -> None:
+    """Write a canonical CSV and any compatibility aliases."""
+    frame.to_csv(path, index=False)
+    for alias in TABLE_ALIASES.get(path.name, []):
+        frame.to_csv(path.with_name(alias), index=False)
+
+
+def merged_experiment_config(config_path: str | Path | None) -> dict:
+    """Load experiment config and fill feature defaults."""
+    if config_path is None:
+        config_path = Path("config/final.yaml")
+    config = load_config(config_path)
+    config["features"] = {
+        **DEFAULT_FEATURES,
+        **dict(config.get("features") or {}),
+    }
+    return config
+
+
+def config_feature(config: dict, name: str) -> bool:
+    """Return an experiment feature flag value."""
+    return bool((config.get("features") or {}).get(name, DEFAULT_FEATURES.get(name, False)))
+
+
+def config_section(config: dict, section: str) -> dict:
+    """Return a named config section as a mapping."""
+    value = config.get(section) or {}
+    if not isinstance(value, dict):
+        raise ValueError(f"Config section {section!r} must be a mapping.")
+    return value
+
+
+def required_config_list(config: dict, section: str, key: str) -> list:
+    """Return a required config value as a list."""
+    value = config_section(config, section).get(key)
+    if value is None:
+        raise ValueError(f"Missing required config value: {section}.{key}")
+    if isinstance(value, list):
+        return list(value)
+    if isinstance(value, tuple):
+        return list(value)
+    return [value]
+
+
+def configured_time_limit(config: dict, cli_value: float | None) -> float:
+    """CLI solver limits override config; config overrides code defaults."""
+    if cli_value is not None:
+        return float(cli_value)
+    return float(config.get("time_limit", 60.0))
+
+
+def configured_max_cascades(config: dict, cli_value: int | None) -> int:
+    """CLI cascade limits override config; config overrides code defaults."""
+    if cli_value is not None:
+        return int(cli_value)
+    return int(config.get("max_cascades", 250))
+
+
+def configured_base_rho(config: dict) -> float:
+    """Return the base recovery factor used for two-stage cascade generation."""
+    return float(config.get("base_rho", 0.75))
+
+
+def configured_matched_report(config: dict) -> dict:
+    """Return report comparison filters, using project defaults when absent."""
+    section = config.get("matched_report") or {}
+    if not isinstance(section, dict):
+        raise ValueError("Config section 'matched_report' must be a mapping.")
+    return {
+        "K": int(section.get("K", 5)),
+        "budget_name": section.get("budget_name", "B_mid"),
+        "Emax": float(section.get("Emax", 0.75)),
+    }
 
 
 def file_sha256(path):
@@ -175,8 +275,126 @@ def compute_budget_grid(data, output_dir):
     return budgets, cheapest, best
 
 
+def configured_budget_items(
+    config: dict, section: str, budgets: dict[str, float]
+) -> list[tuple[str, float]]:
+    """Return budget name/value pairs requested by a model-family config section."""
+    names = required_config_list(config, section, "budget_names")
+    missing = [name for name in names if name not in budgets]
+    if missing:
+        raise ValueError(f"{section}.budget_names contains unknown budgets: {missing}")
+    return [(name, budgets[name]) for name in names]
+
+
+def build_a1_grid(config: dict, budgets: dict[str, float]) -> list[tuple[int, str, float]]:
+    """Return configured A1 grid tuples: K, budget name, and budget."""
+    return [
+        (int(K), budget_name, float(budget))
+        for K in required_config_list(config, "a1", "K")
+        for budget_name, budget in configured_budget_items(config, "a1", budgets)
+    ]
+
+
+def build_a2_grid(config: dict, budgets: dict[str, float]) -> list[tuple[int, str, float, float]]:
+    """Return configured A2 grid tuples: K, budget name, budget, and escalation cap."""
+    return [
+        (int(K), budget_name, float(budget), float(Emax))
+        for K in required_config_list(config, "a2", "K")
+        for budget_name, budget in configured_budget_items(config, "a2", budgets)
+        for Emax in required_config_list(config, "a2", "Emax")
+    ]
+
+
+def build_a3_grid(
+    config: dict, budgets: dict[str, float]
+) -> list[tuple[int, str, float, float, float, float, float]]:
+    """Return configured A3 grid tuples for robust cascade solves."""
+    return [
+        (
+            int(K),
+            budget_name,
+            float(budget),
+            float(Emax),
+            float(floor_multiplier),
+            float(lambda_slack),
+            float(rho),
+        )
+        for K in required_config_list(config, "a3", "K")
+        for budget_name, budget in configured_budget_items(config, "a3", budgets)
+        for Emax in required_config_list(config, "a3", "Emax")
+        for floor_multiplier in required_config_list(config, "a3", "floor_multiplier")
+        for lambda_slack in required_config_list(config, "a3", "lambda_slack")
+        for rho in required_config_list(config, "a3", "rho")
+    ]
+
+
 def _summary_row(result, **extra):
-    return records_from_result(result, extra)
+    row = records_from_result(result, extra)
+    _populate_report_quality_bounds(row, result)
+    return row
+
+
+def _is_missing_value(value):
+    if value is None:
+        return True
+    if isinstance(value, (dict, list, tuple, set)):
+        return False
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _optional_float(value):
+    if _is_missing_value(value):
+        return None
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(numeric):
+        return None
+    return numeric
+
+
+def _min_mapping_value(mapping):
+    if not isinstance(mapping, dict):
+        return None
+    values = [_optional_float(value) for value in mapping.values()]
+    values = [value for value in values if value is not None]
+    return min(values) if values else None
+
+
+def _min_mapping_metric(mapping, metric):
+    if not isinstance(mapping, dict):
+        return None
+    values = []
+    for value in mapping.values():
+        metric_value = value.get(metric) if isinstance(value, dict) else value
+        numeric = _optional_float(metric_value)
+        if numeric is not None:
+            values.append(numeric)
+    return min(values) if values else None
+
+
+def _populate_report_quality_bounds(row, result):
+    """Fill report-level robustness anchors from existing result metadata."""
+    if _is_missing_value(row.get("eta")) and not _is_missing_value(result.get("eta")):
+        row["eta"] = result.get("eta")
+    if _is_missing_value(row.get("total_slack")):
+        total_slack = result.get("total_slack")
+        if _is_missing_value(total_slack) and result.get("domain_slacks"):
+            total_slack = _total_slack(result)
+        if not _is_missing_value(total_slack):
+            row["total_slack"] = total_slack
+    if _is_missing_value(row.get("worst_domain_quality")):
+        worst_domain = _min_mapping_value(result.get("domain_quality"))
+        if worst_domain is not None:
+            row["worst_domain_quality"] = worst_domain
+    if _is_missing_value(row.get("worst_scenario_quality")):
+        worst_scenario = _min_mapping_metric(result.get("scenario_metrics"), "avg_quality")
+        if worst_scenario is not None:
+            row["worst_scenario_quality"] = worst_scenario
 
 
 def _successful(df):
@@ -228,7 +446,7 @@ def make_a3_grid_id(K, budget_name, Emax, floor_multiplier, lambda_slack, rho):
 
 def select_report_a3_policy(results):
     """Select the report A3 policy using a documented lexicographic rule."""
-    feasible = [r for r in results if r.get("status") in STATUS_RANK]
+    feasible = [r for r in results if r.get("status") in STATUS_RANK and _is_successful_result(r)]
     if not feasible:
         return None
     return sorted(
@@ -271,6 +489,8 @@ def build_report_main_comparison(rows, K=5, budget_name="B_mid", Emax=0.75):
             and _float_equals(row.get("Emax"), Emax)
         ):
             keep.append(row)
+    for row in keep:
+        _populate_report_quality_bounds(row, row)
     out = pd.DataFrame(keep)
     for column in REPORT_COMPARISON_COLUMNS:
         if column not in out.columns:
@@ -356,15 +576,16 @@ def collect_solver_diagnostics(result_groups):
     return rows
 
 
-def should_run_a4(skip_a3=False):
-    """Return whether the matched A4 CVaR policy should run for this experiment."""
-    del skip_a3
-    return True
+def should_run_a4(config: dict) -> bool:
+    """A4 is an optional extension and is disabled in default configs."""
+    return config_feature(config, "a4_cvar")
 
 
-def needs_cascade_candidates(skip_a2=False, skip_a3=False):
-    """Return whether run_experiments needs prompt-feasible cascade candidates."""
-    return (not skip_a2) or (not skip_a3) or should_run_a4(skip_a3=skip_a3)
+def needs_cascade_candidates(
+    skip_a2: bool = False, skip_a3: bool = False, run_a4: bool = False
+) -> bool:
+    """Return whether any enabled model family needs cascade candidates."""
+    return (not skip_a2) or (not skip_a3) or run_a4
 
 
 def _record_solution_tables(policy_results, data, scenarios, R=None, C=None, output_rows=None):
@@ -445,17 +666,25 @@ def run_experiments(
     skip_a1=False,
     skip_a2=False,
     skip_a3=False,
-    time_limit=60,
-    max_cascades=250,
+    time_limit=None,
+    max_cascades=None,
 ):
     root = ensure_output_dirs(output_dir)
-    config = load_config(config_path)
+    config = merged_experiment_config(config_path)
+    time_limit = configured_time_limit(config, time_limit)
+    max_cascades = configured_max_cascades(config, max_cascades)
+    base_rho = configured_base_rho(config)
+    run_a4 = should_run_a4(config)
     data = load_dataset(data_path, output_dir=root)
     metadata = load_or_create_metadata(data["M"], path="data/model_metadata.csv")
     metadata.to_csv(root / "tables" / "model_metadata.csv", index=False)
-    recovery_df = estimate_pair_recovery(data, min_support=5, global_rho=0.75)
+    if config_feature(config, "empirical_recovery"):
+        recovery_df = estimate_pair_recovery(data, min_support=5, global_rho=base_rho)
+        recovery_lookup = recovery_lookup_from_frame(recovery_df)
+    else:
+        recovery_df = pd.DataFrame(columns=RECOVERY_COLUMNS)
+        recovery_lookup = None
     recovery_df.to_csv(root / "tables" / "model_pair_recovery.csv", index=False)
-    recovery_lookup = recovery_lookup_from_frame(recovery_df)
     budgets, cheapest, best = compute_budget_grid(data, root)
     scenarios = build_scenarios(data)
     table_rows = {"domain": [], "usage": [], "usage_concentration": [], "scenario": []}
@@ -479,84 +708,86 @@ def run_experiments(
 
     a1_results = []
     if not skip_a1:
-        for K in [1, 2, 3, 5, 8]:
-            for budget_name, B in budgets.items():
-                result = solve_a1(data, K=K, B=B, time_limit=time_limit)
-                result["budget_name"] = budget_name
-                a1_results.append(result)
-                if _has_assignment_result(result, "assignment"):
-                    audit_rows.extend(
-                        audit_single_shot_result(data, result, K=result.get("K"), B=result.get("B"))
-                    )
-        pd.DataFrame(
-            [
-                _summary_row(
-                    r,
-                    family="A1",
-                    K=r.get("K"),
-                    B=r.get("B"),
-                    budget_name=r.get("budget_name"),
+        for K, budget_name, B in build_a1_grid(config, budgets):
+            result = solve_a1(data, K=K, B=B, time_limit=time_limit)
+            result["budget_name"] = budget_name
+            a1_results.append(result)
+            if _has_assignment_result(result, "assignment"):
+                audit_rows.extend(
+                    audit_single_shot_result(data, result, K=result.get("K"), B=result.get("B"))
                 )
-                for r in a1_results
-            ]
-        ).to_csv(root / "tables" / "a1_results.csv", index=False)
+        write_table_with_aliases(
+            pd.DataFrame(
+                [
+                    _summary_row(
+                        r,
+                        family="A1",
+                        K=r.get("K"),
+                        B=r.get("B"),
+                        budget_name=r.get("budget_name"),
+                    )
+                    for r in a1_results
+                ]
+            ),
+            root / "tables" / "a1_results.csv",
+        )
         write_json(root / "solutions" / "a1_solutions.json", {r["policy"]: r for r in a1_results})
         _record_solution_tables(a1_results, data, scenarios, output_rows=table_rows)
 
     cascades = pd.DataFrame()
     params = {"A_p": {}, "R": {}, "C": {}, "Esc": {}}
     a2_results = []
-    run_a4 = should_run_a4(skip_a3=skip_a3)
-    if needs_cascade_candidates(skip_a2=skip_a2, skip_a3=skip_a3):
+    if needs_cascade_candidates(skip_a2=skip_a2, skip_a3=skip_a3, run_a4=run_a4):
         cascades, params = generate_cascades(
-            data, rho=0.75, max_cascades=max_cascades, recovery_lookup=recovery_lookup
+            data, rho=base_rho, max_cascades=max_cascades, recovery_lookup=recovery_lookup
         )
         cascades.to_csv(root / "tables" / "cascade_candidates.csv", index=False)
 
     if not skip_a2:
-        for K in [2, 3, 5]:
-            for budget_name, B in budgets.items():
-                for Emax in [1.0, 0.75, 0.50]:
-                    result = solve_a2(
+        for K, budget_name, B, Emax in build_a2_grid(config, budgets):
+            result = solve_a2(
+                data,
+                cascades,
+                params["R"],
+                params["C"],
+                params["Esc"],
+                params["A_p"],
+                K=K,
+                B=B,
+                Emax=Emax,
+                time_limit=time_limit,
+                Esc3=params.get("Esc3"),
+            )
+            result["budget_name"] = budget_name
+            a2_results.append(result)
+            if _has_assignment_result(result, "cascade_assignment"):
+                audit_rows.extend(
+                    audit_cascade_result(
                         data,
                         cascades,
-                        params["R"],
-                        params["C"],
-                        params["Esc"],
-                        params["A_p"],
-                        K=K,
-                        B=B,
-                        Emax=Emax,
-                        time_limit=time_limit,
-                        Esc3=params.get("Esc3"),
+                        params,
+                        result,
+                        K=result.get("K"),
+                        B=result.get("B"),
+                        Emax=result.get("Emax"),
                     )
-                    result["budget_name"] = budget_name
-                    a2_results.append(result)
-                    if _has_assignment_result(result, "cascade_assignment"):
-                        audit_rows.extend(
-                            audit_cascade_result(
-                                data,
-                                cascades,
-                                params,
-                                result,
-                                K=result.get("K"),
-                                B=result.get("B"),
-                                Emax=result.get("Emax"),
-                            )
-                        )
-        pd.DataFrame(
-            [
-                _summary_row(
-                    r,
-                    family="A2",
-                    K=r.get("K"),
-                    B=r.get("B"),
-                    Emax=r.get("Emax"),
-                    budget_name=r.get("budget_name"),
                 )
-                for r in a2_results
-            ]
-        ).to_csv(root / "tables" / "a2_results.csv", index=False)
+        write_table_with_aliases(
+            pd.DataFrame(
+                [
+                    _summary_row(
+                        r,
+                        family="A2",
+                        K=r.get("K"),
+                        B=r.get("B"),
+                        Emax=r.get("Emax"),
+                        budget_name=r.get("budget_name"),
+                    )
+                    for r in a2_results
+                ]
+            ),
+            root / "tables" / "a2_results.csv",
+        )
         write_json(root / "solutions" / "a2_solutions.json", {r["policy"]: r for r in a2_results})
         _record_solution_tables(
             a2_results, data, scenarios, params["R"], params["C"], output_rows=table_rows
@@ -586,34 +817,32 @@ def run_experiments(
     ]
     lex_passes = []
     if not skip_a3:
-        a3_grid = []
         rho_cascades = {}
-        for K in [3, 5, 8]:
-            for budget_name, B in budgets.items():
-                for Emax in [0.50, 0.75, 1.00]:
-                    for floor_multiplier in [0.75, 0.80, 0.85, 0.90]:
-                        for lambda_slack in [0.01, 0.05, 0.10, 0.25, 0.50]:
-                            for rho in [0.50, 0.75, 1.00]:
-                                a3_grid.append(
-                                    (K, budget_name, B, Emax, floor_multiplier, lambda_slack, rho)
-                                )
-        for K, budget_name, B, Emax, floor_multiplier, lambda_slack, rho in a3_grid:
-            if rho not in rho_cascades:
-                rho_cascades[rho] = generate_cascades(
+        for (
+            K,
+            budget_name,
+            B,
+            Emax,
+            floor_multiplier,
+            lambda_slack,
+            rho_scenario,
+        ) in build_a3_grid(config, budgets):
+            if rho_scenario not in rho_cascades:
+                rho_cascades[rho_scenario] = generate_cascades(
                     data,
-                    rho=rho,
+                    rho=float(rho_scenario),
                     max_cascades=max_cascades,
                     recovery_lookup=recovery_lookup,
                 )
-            cascades_rho, params_rho = rho_cascades[rho]
+            cascades_rho, params_rho = rho_cascades[rho_scenario]
             floors = compute_domain_floors(data, multiplier=floor_multiplier)
             grid_id = make_a3_grid_id(
-                K=K,
-                budget_name=budget_name,
-                Emax=Emax,
-                floor_multiplier=floor_multiplier,
-                lambda_slack=lambda_slack,
-                rho=rho,
+                K,
+                budget_name,
+                Emax,
+                floor_multiplier,
+                lambda_slack,
+                rho_scenario,
             )
             result = solve_a3(
                 data,
@@ -638,7 +867,7 @@ def run_experiments(
                     "budget_name": budget_name,
                     "floor_multiplier": floor_multiplier,
                     "lambda_slack": lambda_slack,
-                    "rho": rho,
+                    "rho": rho_scenario,
                     "total_slack": _total_slack(result),
                     "grid_id": grid_id,
                 }
@@ -718,16 +947,16 @@ def run_experiments(
             pd.DataFrame(columns=list(_summary_row({}, **best_report_extra).keys())).to_csv(
                 root / "tables" / "a3_best_report_policy.csv", index=False
             )
-        if best_report is not None:
-            rho = best_report.get("rho", 0.75)
-            if rho not in rho_cascades:
-                rho_cascades[rho] = generate_cascades(
+        if config_feature(config, "lexicographic_a3") and best_report is not None:
+            rho_scenario = best_report.get("rho", base_rho)
+            if rho_scenario not in rho_cascades:
+                rho_cascades[rho_scenario] = generate_cascades(
                     data,
-                    rho=rho,
+                    rho=float(rho_scenario),
                     max_cascades=max_cascades,
                     recovery_lookup=recovery_lookup,
                 )
-            cascades_rho, params_rho = rho_cascades[rho]
+            cascades_rho, params_rho = rho_cascades[rho_scenario]
             lex_result = solve_a3_lexicographic(
                 data,
                 cascades_rho,
@@ -840,6 +1069,8 @@ def run_experiments(
             a4_results, data, scenarios, params["R"], params["C"], output_rows=table_rows
         )
         write_json(root / "solutions" / "a4_solutions.json", {r["policy"]: r for r in a4_results})
+    else:
+        write_json(root / "solutions" / "a4_solutions.json", {})
     pd.DataFrame(
         [
             _summary_row(
@@ -877,39 +1108,49 @@ def run_experiments(
     provider_df = pd.DataFrame(provider_rows)
     provider_df.to_csv(root / "tables" / "provider_usage.csv", index=False)
     provider_df[["policy", "storage_gb"]].to_csv(root / "tables" / "storage_usage.csv", index=False)
-    stress_scenarios = sample_dirichlet_scenarios(data, n=500, concentration=40.0, seed=164)
     stress_rows = []
-    stress_cascade_cache = {}
-    for result in representative:
-        if result is None or result.get("status") not in {
-            "ok",
-            "optimal",
-            "feasible",
-            "feasible_time_limited",
-        }:
-            continue
-        if "cascade_assignment" in result:
-            rho = result.get("rho", 0.75)
-            if rho not in stress_cascade_cache:
-                stress_cascade_cache[rho] = generate_cascades(
-                    data,
-                    rho=rho,
-                    max_cascades=max_cascades,
-                    recovery_lookup=recovery_lookup,
-                )[1]
-            params_rho = stress_cascade_cache[rho]
-            stress_rows.extend(
-                evaluate_policy_under_scenarios(
-                    result, stress_scenarios, params_rho["R"], params_rho["C"]
-                ).to_dict("records")
-            )
-        elif "assignment" in result:
-            stress_rows.extend(
-                evaluate_policy_under_scenarios(
-                    result, stress_scenarios, data["q"], data["c"]
-                ).to_dict("records")
-            )
-    pd.DataFrame(stress_rows).to_csv(root / "tables" / "stress_test_results.csv", index=False)
+    if config_feature(config, "stress_tests"):
+        stress_config = config.get("stress") or {}
+        stress_scenarios = sample_dirichlet_scenarios(
+            data,
+            n=int(stress_config.get("dirichlet_samples", 500)),
+            concentration=float(stress_config.get("concentration", 40.0)),
+            seed=int(config.get("random_seed", 164)),
+        )
+        stress_cascade_cache = {}
+        for result in representative:
+            if result is None or result.get("status") not in {
+                "ok",
+                "optimal",
+                "feasible",
+                "feasible_time_limited",
+            }:
+                continue
+            if "cascade_assignment" in result:
+                rho_scenario = result.get("rho", base_rho)
+                if rho_scenario not in stress_cascade_cache:
+                    stress_cascade_cache[rho_scenario] = generate_cascades(
+                        data,
+                        rho=float(rho_scenario),
+                        max_cascades=max_cascades,
+                        recovery_lookup=recovery_lookup,
+                    )[1]
+                params_rho = stress_cascade_cache[rho_scenario]
+                stress_rows.extend(
+                    evaluate_policy_under_scenarios(
+                        result, stress_scenarios, params_rho["R"], params_rho["C"]
+                    ).to_dict("records")
+                )
+            elif "assignment" in result:
+                stress_rows.extend(
+                    evaluate_policy_under_scenarios(
+                        result, stress_scenarios, data["q"], data["c"]
+                    ).to_dict("records")
+                )
+        stress_df = pd.DataFrame(stress_rows)
+    else:
+        stress_df = pd.DataFrame(columns=STRESS_RESULT_COLUMNS)
+    stress_df.to_csv(root / "tables" / "stress_test_results.csv", index=False)
     summary_rows = [_summary_row(r, family="baseline") for r in [cheapest, best]] + [
         _summary_row(r, family="A0", alpha=r.get("alpha")) for r in a0_results
     ]
@@ -969,7 +1210,8 @@ def run_experiments(
     pareto_frontier(_successful(all_summary)).to_csv(
         root / "tables" / "pareto_frontier.csv", index=False
     )
-    report_main = build_report_main_comparison(summary_rows, K=5, budget_name="B_mid", Emax=0.75)
+    report_filters = configured_matched_report(config)
+    report_main = build_report_main_comparison(summary_rows, **report_filters)
     report_main.to_csv(root / "tables" / "report_main_comparison.csv", index=False)
     chosen = select_report_policy(a3_results, a2_results, a1_results)
     if chosen is not None:

@@ -26,10 +26,10 @@ def parse_args():
         "--only-plots", action="store_true", help="Regenerate figures from existing output CSVs."
     )
     parser.add_argument(
-        "--time-limit", type=float, default=60.0, help="Per-solve solver time limit in seconds."
+        "--time-limit", type=float, default=None, help="Per-solve solver time limit in seconds."
     )
     parser.add_argument(
-        "--max-cascades", type=int, default=250, help="Maximum global cascade candidates."
+        "--max-cascades", type=int, default=None, help="Maximum global cascade candidates."
     )
     return parser.parse_args()
 

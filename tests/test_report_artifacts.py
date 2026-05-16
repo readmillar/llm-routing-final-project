@@ -221,6 +221,7 @@ def test_empty_matched_report_table_has_expected_schema():
         "worst_scenario_quality",
         "p05_stress_quality",
         "worst_domain_quality",
+        "eta",
         "total_slack",
         "escalation_rate",
         "num_models_selected",

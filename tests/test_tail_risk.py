@@ -28,11 +28,11 @@ def test_a4_cvar_returns_tail_risk_metrics(synthetic_data):
     assert result["cvar_shortfall"] >= 0.0
 
 
-def test_a4_experiment_path_is_not_gated_by_skip_a3():
+def test_a4_experiment_path_is_config_driven():
     from src.experiments import needs_cascade_candidates, should_run_a4
 
-    assert should_run_a4(skip_a3=True)
-    assert needs_cascade_candidates(skip_a2=True, skip_a3=True)
+    assert should_run_a4({"features": {"a4_cvar": True}})
+    assert needs_cascade_candidates(skip_a2=True, skip_a3=True, run_a4=True)
 
 
 def test_a4_rejects_invalid_beta_without_raising(synthetic_data):

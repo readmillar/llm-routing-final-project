@@ -1,5 +1,5 @@
 random_seed: 164
-profile: core_final
+profile: smoke
 
 time_limit: 20
 max_cascades: 40
@@ -14,27 +14,27 @@ features:
   provider_storage_constraints: false
 
 a1:
-  K: [1, 2, 3, 5]
-  budget_names: ["B_low", "B_mid", "B_high"]
+  K: [1]
+  budget_names: ["B_mid"]
 
 a2:
-  K: [5]
+  K: [2]
   budget_names: ["B_mid"]
-  Emax: [0.75]
+  Emax: [1.0]
 
 a3:
-  K: [5]
+  K: [2]
   budget_names: ["B_mid"]
-  Emax: [0.75]
-  floor_multiplier: [0.85]
+  Emax: [1.0]
+  floor_multiplier: [0.75]
   lambda_slack: [0.1]
   rho: [0.75]
 
 matched_report:
-  K: 5
+  K: 2
   budget_name: "B_mid"
-  Emax: 0.75
-  floor_multiplier: 0.85
+  Emax: 1.0
+  floor_multiplier: 0.75
   lambda_slack: 0.1
   rho: 0.75
 

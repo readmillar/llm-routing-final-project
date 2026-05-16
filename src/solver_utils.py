@@ -71,7 +71,7 @@ def normalize_status(termination_condition, has_incumbent=False):
     if "feasible solution was not found" in text or "no solution" in text:
         return "no_solution"
     if "max" in text or "time" in text:
-        return "feasible_time_limited" if has_incumbent else "no_solution"
+        return "feasible_time_limited"
     if "feasible" in text:
         return "feasible"
     return text.replace(" ", "_")

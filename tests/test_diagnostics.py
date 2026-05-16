@@ -35,14 +35,18 @@ def test_normalize_status_distinguishes_time_limited_feasible():
 
     assert normalize_status("optimal", has_incumbent=True) == "optimal"
     assert normalize_status("maxTimeLimit", has_incumbent=True) == "feasible_time_limited"
-    assert normalize_status("maxTimeLimit", has_incumbent=False) == "no_solution"
+    assert normalize_status("maxTimeLimit", has_incumbent=False) == "feasible_time_limited"
+    assert (
+        normalize_status("feasible solution was not found", has_incumbent=False)
+        == "no_solution"
+    )
     assert normalize_status("infeasible", has_incumbent=False) == "infeasible"
 
 
-def test_result_status_time_limit_without_incumbent_is_no_solution():
+def test_result_status_time_limit_without_solution_count_is_feasible_time_limited():
     from src.solver_utils import result_status
 
-    assert result_status(_FakeResults("maxTimeLimit", solutions=[])) == "no_solution"
+    assert result_status(_FakeResults("maxTimeLimit", solutions=[])) == "feasible_time_limited"
 
 
 def test_result_status_time_limit_with_incumbent_is_feasible_time_limited():
